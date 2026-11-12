@@ -200,3 +200,35 @@ test('withChanges keeps banks and other state', () => {
   assert.deepEqual(next.banks, st.banks);
   assert.equal(next.settings, st.settings);
 });
+
+test('leave pauses accrual for whole pay periods on leave', () => {
+  // Paydays Nov 6, Nov 20, Dec 4, Dec 18 (biweekly Fridays), 5h each.
+  const st = Object.assign(base(), { leaves: [{ id: 'l', start: '2026-11-07', end: '2026-12-04' }] });
+  const tl = PTO.buildTimeline(st, '2026-12-31');
+  assert.equal(tl.days.get('2026-11-06').accrued, 5);      // period Oct 24–Nov 6: worked
+  assert.equal(tl.days.get('2026-11-20').accrued, 0);      // fully on leave
+  assert.equal(tl.days.get('2026-11-20').paused, 5);
+  assert.equal(tl.days.get('2026-12-04').accrued, 0);
+  assert.equal(tl.days.get('2026-12-18').accrued, 5);      // back at work
+  assert.equal(PTO.balanceOn(tl, '2026-12-18'), 50);
+  assert.equal(tl.days.get('2026-11-10').leave, true);
+  assert.equal(tl.days.get('2026-12-07').leave, false);
+});
+
+test('leave pro-rates a partly worked pay period and can be open-ended', () => {
+  // Pay period Nov 21–Dec 4 has 10 weekdays; leave starts Mon Nov 30, so 5 worked and 5 on leave.
+  const st = Object.assign(base(), { leaves: [{ id: 'l', start: '2026-11-30' }] }); // no end date
+  const tl = PTO.buildTimeline(st, '2027-01-31');
+  assert.equal(tl.days.get('2026-12-04').accrued, 2.5);
+  assert.equal(tl.days.get('2026-12-04').paused, 2.5);
+  assert.equal(tl.days.get('2027-01-29').accrued, 0);      // still on leave
+  assert.equal(PTO.onLeave(st.leaves, '2027-06-01'), true);
+});
+
+test('PTO can still be used while on leave', () => {
+  const st = Object.assign(base(), { leaves: [{ id: 'l', start: '2026-11-07', end: '2026-12-04' }] });
+  st.entries['2026-11-16'] = { hours: 4 };
+  const tl = PTO.buildTimeline(st, '2026-12-05');
+  assert.equal(PTO.balanceOn(tl, '2026-11-16'), 41);       // 40 + 5 - 4
+  assert.equal(PTO.balanceOn(tl, '2026-12-05'), 41);       // nothing accrued on leave
+});

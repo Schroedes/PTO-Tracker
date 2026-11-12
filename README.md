@@ -28,6 +28,11 @@ seeing the consequences of taking time off before you commit to it.
   When booking a day, choose **PTO** or the personal bank; personal days don't touch your PTO balance.
   The home screen shows how many are left, when the next grant arrives, and how many will expire
   unused; you'll also get an alert 60 days before they do.
+- **Leave pauses accrual.** If you go on leave and stop earning PTO, add the leave in Settings →
+  *Leave (accrual paused)* or tap **Start leave on this day** / **End leave on this day** in any day's
+  sheet; the end date can stay blank until you know it. Paychecks covering leave earn nothing, and
+  one that covers part leave and part work earns its share of the workdays you weren't on leave.
+  You can still book PTO during leave to top up reduced pay; it comes straight off your balance.
 - **At-a-glance summary**: balance today, next payday, lowest point ahead, Dec 31 balance, plus
   warnings when your plan goes negative, when you'll hit your cap, or when your stub balance is stale.
 - **Pay schedules**: every 2 weeks, weekly, 15th & last day, or monthly.

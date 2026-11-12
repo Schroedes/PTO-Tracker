@@ -33,6 +33,7 @@
       },
       entries: {},
       banks: [],
+      leaves: [],
     };
   }
   function load() {
@@ -109,7 +110,10 @@
     // Entries pointing at a bank that no longer exists fall back to PTO.
     const ids = new Set(banks.map((b) => b.id));
     for (const e of Object.values(entries)) if (e.bank && !ids.has(e.bank)) delete e.bank;
-    return { settings, entries, banks };
+    const leaves = (Array.isArray(s.leaves) ? s.leaves : [])
+      .filter((l) => l && ISO_RE.test(l.start))
+      .map((l) => ({ id: String(l.id || 'l' + l.start), start: l.start, end: ISO_RE.test(l.end || '') ? l.end : '', note: String(l.note || '') }));
+    return { settings, entries, banks, leaves };
   }
 
   // ---------- Formatting ----------
@@ -150,6 +154,9 @@
   }
   const isCounted = (iso) => P.toDayNum(iso) <= P.toDayNum(state.settings.asOfDate);
   const banks = () => state.banks || [];
+  const leaves = () => state.leaves || [];
+  const leaveOn = (iso) => P.leaveOn(leaves(), iso);
+  const leaveLabel = (l) => shortDate(l.start) + (l.end ? ' – ' + shortDate(l.end) : ' onward');
   const bankById = (id) => banks().find((b) => b.id === id) || null;
   const entryBank = (e) => (e && e.bank ? bankById(e.bank) : null);
   function bankTimeline(bank, st) {
@@ -216,7 +223,8 @@
       const d = tl.days.get(np);
       $('sum-payday').textContent = shortDay(np).replace(',', '');
       $('sum-payday').classList.remove('neg');
-      $('sum-payday-sub').textContent = d ? signed(d.accrued) + ' → ' + h(d.balance) : '';
+      $('sum-payday-sub').textContent = !d ? '' : d.paused > 0 && d.accrued === 0 ? 'Paused for leave'
+        : signed(d.accrued) + (d.paused > 0 ? ' (part leave)' : '') + ' → ' + h(d.balance);
       $('card-payday').dataset.date = np;
     }
 
@@ -262,6 +270,18 @@
     const box = $('alert');
     const items = [];
     const lp = P.lowPoint(tl, today);
+    const current = leaveOn(today);
+    if (current) {
+      items.push(['info', 'You’re on leave' + (current.note ? ' (' + esc(current.note) + ')' : '') + ', so PTO isn’t accruing ' +
+        (current.end ? 'through your last day of leave, <b>' + esc(shortDay(current.end)) + '</b>' : 'until you set a return date') +
+        '. You can still use PTO to top up your pay.', 'settings', 'Edit leave']);
+    } else {
+      const soon = leaves().filter((l) => l.start > today && P.toDayNum(l.start) - P.toDayNum(today) <= 45).sort((a, b) => (a.start < b.start ? -1 : 1))[0];
+      if (soon) {
+        items.push(['info', 'Leave starts <b>' + esc(shortDay(soon.start)) + '</b>. PTO accrual pauses ' +
+          (soon.end ? 'through ' + esc(shortDate(soon.end)) : 'until you set a return date') + '.', soon.start, 'View']);
+      }
+    }
     if (lp.firstNegative) {
       items.push(['bad', 'Your plan goes negative on <b>' + esc(shortDay(lp.firstNegative)) + '</b> (lowest ' +
         esc(h(lp.min)) + ' on ' + esc(shortDate(lp.minDate)) + ').', lp.firstNegative, 'View']);
@@ -289,7 +309,7 @@
         '. Enter the number from your latest pay stub to stay accurate.', 'settings', 'Update']);
     }
     box.innerHTML = items.map(([cls, html, target, label]) =>
-      '<div class="alert-item ' + cls + '"><span class="icon" aria-hidden="true">' + (cls === 'bad' ? 'error' : 'warning') + '</span>' +
+      '<div class="alert-item ' + cls + '"><span class="icon" aria-hidden="true">' + ({ bad: 'error', info: 'beach_access' }[cls] || 'warning') + '</span>' +
       '<span class="body-medium">' + html + '</span>' +
       '<button type="button" class="button text" data-target="' + target + '">' + label + '</button></div>').join('');
     box.hidden = items.length === 0;
@@ -310,6 +330,7 @@
     }
     const bl = banks();
     $('lg-bank').hidden = $('lg-grant').hidden = bl.length === 0;
+    $('lg-leave').hidden = leaves().length === 0;
     $('lg-bank-label').textContent = bl.length === 1 ? bl[0].name : 'Personal day';
     let html = '';
     for (let i = 0; i < cells; i++) {
@@ -324,6 +345,7 @@
       if (entry) cls.push('off');
       if (entry && entryBank(entry)) cls.push('bank');
       if (grantDays.has(iso)) cls.push('grant');
+      if (leaveOn(iso)) cls.push('leave');
       if (entry && isCounted(iso)) cls.push('counted');
       if (d && d.payday) cls.push('payday');
       if (d && d.balance < 0) cls.push('negative');
@@ -333,7 +355,8 @@
       if (d) label.push('balance ' + h(d.balance));
       if (entry) label.push(h(entry.hours) + ' off' + (entryBank(entry) ? ' from ' + entryBank(entry).name : ''));
       if (grantDays.has(iso)) label.push(grantDays.get(iso).name + ' granted');
-      if (d && d.payday) label.push('payday');
+      if (d && d.payday) label.push(d.paused > 0 && d.accrued === 0 ? 'payday, accrual paused' : 'payday');
+      if (leaveOn(iso)) label.push('on leave');
       html += '<button type="button" class="' + cls.join(' ') + '" data-date="' + iso + '" aria-label="' + esc(label.join(', ')) + '">' +
         '<span class="num">' + Number(iso.slice(8)) + '</span>' +
         (entry ? '<span class="used">−' + esc(num(entry.hours)) + '</span>' : '') +
@@ -394,7 +417,9 @@
     const w = P.dayOfWeek(iso);
     if (w === 0 || w === 6) tags.push('<span class="tag">Weekend</span>');
     if (d && d.payday) {
-      tags.push('<span class="tag pay"><span class="icon" aria-hidden="true">payments</span>Payday ' + esc(signed(d.accrued)) + '</span>');
+      tags.push('<span class="tag pay"><span class="icon" aria-hidden="true">payments</span>Payday ' +
+        (d.accrued === 0 && d.paused > 0 ? '· accrual paused' : esc(signed(d.accrued))) + '</span>');
+      if (d.paused > 0) tags.push('<span class="tag"><span class="icon" aria-hidden="true">beach_access</span>' + esc(h(d.paused)) + ' not earned (leave)</span>');
       if (d.lost > 0) tags.push('<span class="tag warn"><span class="icon" aria-hidden="true">warning</span>' + esc(h(d.lost)) + ' lost to cap</span>');
     }
     for (const b of banks()) {
@@ -402,9 +427,12 @@
       if (bd && bd.granted > 0) tags.push('<span class="tag pay"><span class="icon" aria-hidden="true">redeem</span>' + esc(b.name) + ' +' + esc(h(bd.granted)) + '</span>');
       if (bd && bd.lost > 0) tags.push('<span class="tag warn"><span class="icon" aria-hidden="true">warning</span>' + esc(h(bd.lost)) + ' ' + esc(b.name) + ' expired</span>');
     }
+    const lv = leaveOn(iso);
+    if (lv) tags.push('<span class="tag"><span class="icon" aria-hidden="true">beach_access</span>On leave · ' + esc(leaveLabel(lv)) + '</span>');
     if (isCounted(iso)) tags.push('<span class="tag">Before balance date — already counted</span>');
     $('day-tags').innerHTML = tags.join('');
 
+    $('leave-toggle-label').textContent = lv ? (lv.start === iso ? 'Remove this leave' : 'End leave on this day') : 'Start leave on this day';
     sheetBank = entry && entryBank(entry) ? entry.bank : 'pto';
     renderBankPicker();
 
@@ -564,6 +592,11 @@
       return;
     }
 
+    const onLeaveDays = dates.filter((d) => leaveOn(d)).length;
+    if (onLeaveDays && r.deltaHours > 0) {
+      out.push(box('info', (onLeaveDays === dates.length ? 'You’re on leave then' : onLeaveDays + ' of these days are during leave') +
+        ', so PTO isn’t accruing — these hours come straight off your balance with nothing coming back in until you return.'));
+    }
     out.push(row('PTO after ' + esc(shortDate(r.last)),
       esc(h(r.balanceBefore)) + '<span class="arrow">→</span><span class="' + (r.balanceAfter < 0 ? 'neg' : '') + '">' + esc(h(r.balanceAfter)) + '</span>'));
     out.push(row('Lowest PTO ahead',
@@ -646,6 +679,30 @@
     toast('Removed time off on ' + shortDate(sheetDate), () => restore(prev));
   }
 
+  /** Start, end or remove a leave from the day sheet. */
+  function toggleLeave() {
+    const iso = sheetDate;
+    const prev = state;
+    const lv = leaveOn(iso);
+    let list = leaves().map((l) => Object.assign({}, l));
+    let msg;
+    if (!lv) {
+      list.push({ id: 'l' + Date.now().toString(36), start: iso, end: '', note: '' });
+      msg = 'Leave starts ' + shortDate(iso) + ' · accrual paused';
+    } else if (lv.start === iso) {
+      list = list.filter((l) => l.id !== lv.id);
+      msg = 'Leave removed';
+    } else {
+      list = list.map((l) => (l.id === lv.id ? Object.assign(l, { end: iso }) : l));
+      msg = 'Leave ends ' + shortDate(iso) + ' · accrual resumes after';
+    }
+    state = Object.assign({}, state, { leaves: list });
+    save();
+    render();
+    openDay(iso);
+    toast(msg, () => { restore(prev); if ($('day-sheet').open) openDay(iso); });
+  }
+
   function deleteTrip() {
     const trip = P.tripDates(state.entries, sheetDate);
     if (!trip.length) return;
@@ -671,6 +728,7 @@
     $('s-cap').value = s.cap === null || s.cap === '' ? '' : s.cap;
     $('s-default').value = s.defaultHours;
     renderBankEditors(banks());
+    renderLeaveEditors(leaves());
     renderStorageStatus();
     $('settings-intro').hidden = !firstRun;
     $('settings-close').hidden = firstRun;
@@ -712,6 +770,28 @@
     }));
   }
 
+  function leaveEditor(l) {
+    return '<div class="leave-editor" data-id="' + esc(l.id) + '">' +
+      '<div class="two">' +
+        '<label class="text-field filled"><span class="tf-label">Leave starts</span><input class="l-start" type="date" value="' + esc(l.start) + '" required></label>' +
+        '<label class="text-field filled"><span class="tf-label">Last day (optional)</span><input class="l-end" type="date" value="' + esc(l.end) + '"></label>' +
+      '</div>' +
+      '<label class="text-field filled"><span class="tf-label">Note (optional)</span><input class="l-note" type="text" maxlength="40" value="' + esc(l.note) + '" placeholder="e.g. Parental leave"></label>' +
+      '<button type="button" class="button text danger remove-leave"><span class="icon" aria-hidden="true">delete</span>Remove</button>' +
+      '</div>';
+  }
+  function renderLeaveEditors(list) {
+    $('leave-list').innerHTML = list.map(leaveEditor).join('');
+  }
+  function readLeaveEditors() {
+    return [...document.querySelectorAll('#leave-list .leave-editor')].map((el) => {
+      const start = el.querySelector('.l-start').value;
+      let end = el.querySelector('.l-end').value;
+      if (end && end < start) end = start;
+      return { id: el.dataset.id, start, end, note: el.querySelector('.l-note').value.trim() };
+    }).filter((l) => l.start);
+  }
+
   function syncAnchorField() {
     const semi = $('s-frequency').value === 'semimonthly';
     $('anchor-field').hidden = semi;
@@ -731,6 +811,7 @@
       defaultHours: Number($('s-default').value) || 8,
     };
     state.banks = readBankEditors();
+    state.leaves = readLeaveEditors();
     // Planned days from a removed bank go back to PTO.
     const ids = new Set(state.banks.map((b) => b.id));
     let moved = 0;
@@ -888,6 +969,19 @@
   });
   $('day-delete').addEventListener('click', deleteDay);
   $('trip-delete').addEventListener('click', deleteTrip);
+  $('leave-toggle').addEventListener('click', toggleLeave);
+  $('btn-add-leave').addEventListener('click', () => {
+    const current = readLeaveEditors();
+    current.push({ id: 'l' + Date.now().toString(36), start: today, end: '', note: '' });
+    renderLeaveEditors(current);
+    const last = $('leave-list').lastElementChild;
+    last.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    last.querySelector('.l-start').focus();
+  });
+  $('leave-list').addEventListener('click', (e) => {
+    const rm = e.target.closest('.remove-leave');
+    if (rm) rm.closest('.leave-editor').remove();
+  });
   $('bank-seg').addEventListener('click', (e) => {
     const b = e.target.closest('[data-bank]');
     if (!b) return;

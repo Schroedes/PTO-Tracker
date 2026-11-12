@@ -7,6 +7,8 @@
  *   - On every payday after asOfDate, "accrualHours" are added (limited by an optional cap).
  *   - On every day with a time-off entry after asOfDate, that many hours are subtracted.
  *     Paydays accrue before same-day usage is subtracted.
+ *   - Leave periods (state.leaves) pause accrual: each paycheck earns its accrual pro-rated by the
+ *     share of weekdays in its pay period that were not on leave. Using PTO on leave still works.
  *   - Optional extra banks (e.g. "Personal holidays: 3 days every July 1") are tracked separately
  *     from PTO. An entry with `bank: <id>` draws from that bank instead of PTO.
  *
@@ -101,6 +103,13 @@
     const startNum = toDayNum(s.asOfDate);
     const endNum = Math.max(toDayNum(endIso), startNum);
     const paydays = new Set(paydaysBetween(s, s.asOfDate, fromDayNum(endNum)));
+    const leaves = state.leaves || [];
+    // Previous payday for each payday, so we know which days each paycheck covers.
+    const prevOf = new Map();
+    if (leaves.length) {
+      const all = paydaysBetween(s, fromDayNum(startNum - 70), fromDayNum(endNum));
+      for (let i = 1; i < all.length; i++) prevOf.set(all[i], all[i - 1]);
+    }
 
     const days = new Map();
     let bal = Number(s.startingBalance) || 0;
@@ -113,14 +122,20 @@
       const iso = fromDayNum(n);
       let accrued = 0;
       let lost = 0;
+      let paused = 0;
       const payday = paydays.has(iso);
       if (payday && accrual > 0) {
+        let earned = accrual;
+        if (leaves.length && prevOf.has(iso)) {
+          earned = accrual * accrualShare(leaves, prevOf.get(iso), iso);
+          paused = accrual - earned;
+        }
         if (cap !== null) {
           const room = Math.max(0, cap - bal);
-          accrued = Math.min(accrual, room);
-          lost = accrual - accrued;
+          accrued = Math.min(earned, room);
+          lost = earned - accrued;
         } else {
-          accrued = accrual;
+          accrued = earned;
         }
         bal += accrued;
       }
@@ -128,11 +143,35 @@
       const used = entry && isPto(entry) ? Number(entry.hours) || 0 : 0;
       bal -= used;
       days.set(iso, {
-        balance: round2(bal), accrued: round2(accrued), lost: round2(lost),
-        used, payday, entry,
+        balance: round2(bal), accrued: round2(accrued), lost: round2(lost), paused: round2(paused),
+        used, payday, entry, leave: leaves.length > 0 && onLeave(leaves, iso),
       });
     }
     return { start: s.asOfDate, end: fromDayNum(endNum), days };
+  }
+
+  /** Is `iso` inside any leave period? A leave with no end date is ongoing. */
+  function onLeave(leaves, iso) {
+    return (leaves || []).some((l) => l.start && iso >= l.start && (!l.end || iso <= l.end));
+  }
+
+  /** Share (0..1) of weekdays in the pay period (prevPayday, payday] that were not on leave. */
+  function accrualShare(leaves, prevPayday, payday) {
+    let work = 0;
+    let total = 0;
+    for (let n = toDayNum(prevPayday) + 1; n <= toDayNum(payday); n++) {
+      const iso = fromDayNum(n);
+      const w = dayOfWeek(iso);
+      if (w === 0 || w === 6) continue;
+      total++;
+      if (!onLeave(leaves, iso)) work++;
+    }
+    return total ? work / total : 1;
+  }
+
+  /** The leave period covering `iso`, or null. */
+  function leaveOn(leaves, iso) {
+    return (leaves || []).find((l) => l.start && iso >= l.start && (!l.end || iso <= l.end)) || null;
   }
 
   /** Balance at end of `iso`, or null if before asOfDate / outside the timeline. */
@@ -383,6 +422,6 @@
     toDayNum, fromDayNum, addDays, dayOfWeek, daysInMonth, isoFromParts, todayIso, round2,
     paydaysBetween, nextPayday, buildTimeline, balanceOn, lowPoint, safeToUse,
     earliestAffordable, withChanges, dateRange, isWeekend, tripDates, groupTrips,
-    isPto, bankHours, grantDatesBetween, buildBankTimeline, bankExpiresOn, horizonFor, analyzeChange,
+    onLeave, leaveOn, accrualShare, isPto, bankHours, grantDatesBetween, buildBankTimeline, bankExpiresOn, horizonFor, analyzeChange,
   };
 });
