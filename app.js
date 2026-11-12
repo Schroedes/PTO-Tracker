@@ -161,7 +161,9 @@
         '. Enter the number from your latest pay stub to stay accurate.', 'settings', 'Update']);
     }
     box.innerHTML = items.map(([cls, html, target, label]) =>
-      '<div class="alert-item ' + cls + '">' + html + ' <button type="button" data-target="' + target + '">' + label + '</button></div>').join('');
+      '<div class="alert-item ' + cls + '"><span class="icon" aria-hidden="true">' + (cls === 'bad' ? 'error' : 'warning') + '</span>' +
+      '<span class="body-medium">' + html + '</span>' +
+      '<button type="button" class="button text" data-target="' + target + '">' + label + '</button></div>').join('');
     box.hidden = items.length === 0;
   }
 
@@ -214,7 +216,8 @@
       const b = P.balanceOn(tl, d);
       const after = isCounted(d) ? 'already counted' : 'leaves ' + h(b);
       return '<li><button type="button" data-date="' + d + '">' +
-        '<span class="when">' + esc(shortDay(d)) + '</span>' +
+        '<span class="avatar" aria-hidden="true"><span><small>' + esc(fmtDate(d, { month: 'short' })) + '</small>' + Number(d.slice(8)) + '</span></span>' +
+        '<span class="when">' + esc(fmtDate(d, { weekday: 'long' })) + (d.slice(0, 4) !== today.slice(0, 4) ? ' ' + d.slice(0, 4) : '') + '</span>' +
         '<span class="hrs">−' + esc(h(e.hours)) + '</span>' +
         '<span class="note">' + esc(e.note || '') + '</span>' +
         '<span class="after' + (b !== null && b < 0 && !isCounted(d) ? ' neg' : '') + '">' + esc(after) + '</span>' +
@@ -242,8 +245,8 @@
     const w = P.dayOfWeek(iso);
     if (w === 0 || w === 6) tags.push('<span class="tag">Weekend</span>');
     if (d && d.payday) {
-      tags.push('<span class="tag pay">Payday ' + esc(signed(d.accrued)) + '</span>');
-      if (d.lost > 0) tags.push('<span class="tag warn">' + esc(h(d.lost)) + ' lost to cap</span>');
+      tags.push('<span class="tag pay"><span class="icon" aria-hidden="true">payments</span>Payday ' + esc(signed(d.accrued)) + '</span>');
+      if (d.lost > 0) tags.push('<span class="tag warn"><span class="icon" aria-hidden="true">warning</span>' + esc(h(d.lost)) + ' lost to cap</span>');
     }
     if (isCounted(iso)) tags.push('<span class="tag">Before balance date — already counted</span>');
     $('day-tags').innerHTML = tags.join('');
@@ -269,7 +272,7 @@
     const dh = Number(state.settings.defaultHours) || 8;
     const opts = Array.from(new Set([2, 4, dh / 2, dh].map((x) => P.round2(x)))).filter((x) => x > 0).sort((a, b) => a - b);
     $('quick-hours').innerHTML = opts.map((x) =>
-      '<button type="button" class="chip" data-hours="' + x + '">' + esc(h(x)) + (x === P.round2(dh) ? ' · full day' : '') + '</button>').join('');
+      '<button type="button" class="chip filter" data-hours="' + x + '"><span class="icon check" aria-hidden="true">check</span>' + esc(h(x)) + (x === P.round2(dh) ? ' · full day' : '') + '</button>').join('');
 
     updateImpact();
     $('day-sheet').showModal();
@@ -293,7 +296,7 @@
   function updateImpact() {
     const { changes, dates, hours } = pendingChanges();
     document.querySelectorAll('#quick-hours .chip').forEach((c) =>
-      c.classList.toggle('active', Number(c.dataset.hours) === hours));
+      c.classList.toggle('selected', Number(c.dataset.hours) === hours));
     const out = [];
     const hz = horizon();
     const r = P.analyzeChange(state, changes, today, hz);
@@ -354,7 +357,10 @@
     $('impact').innerHTML = out.join('');
 
     function row(label, value) { return '<div class="row"><span>' + label + '</span><b>' + value + '</b></div>'; }
-    function box(cls, html) { return '<div class="box ' + cls + '">' + html + '</div>'; }
+    function box(cls, html) {
+      const icon = { ok: 'check_circle', bad: 'error', warn: 'warning', info: 'info' }[cls];
+      return '<div class="box ' + cls + '"><span class="icon" aria-hidden="true">' + icon + '</span><span>' + html + '</span></div>';
+    }
   }
 
   function saveDay() {
@@ -452,6 +458,8 @@
   function toast(msg) {
     const t = $('toast');
     t.textContent = msg;
+    t.hidden = true;
+    void t.offsetWidth; // restart the enter animation
     t.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
@@ -488,6 +496,13 @@
       if (b) jumpAndOpen(b.dataset.date);
     });
   }
+  $('fab-add').addEventListener('click', () => {
+    // Today if it's in the month being viewed, otherwise the 1st of that month.
+    const viewingToday = today.slice(0, 7) === P.isoFromParts(view.year, view.month, 1).slice(0, 7);
+    openDay(viewingToday ? today : P.isoFromParts(view.year, view.month, 1));
+  });
+  const bar = $('app-bar');
+  window.addEventListener('scroll', () => bar.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   $('toggle-past').addEventListener('click', () => { showPast = !showPast; render(); });
   $('card-today').addEventListener('click', () => goToMonth(today));
   for (const id of ['card-payday', 'card-low', 'card-eoy']) {

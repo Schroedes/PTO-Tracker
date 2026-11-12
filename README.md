@@ -38,14 +38,19 @@ npm start        # serves on http://localhost:8080
 npm test         # runs the balance-math tests
 ```
 
-To use it on your phone, host the folder anywhere static — e.g. GitHub Pages
-(Settings → Pages → deploy from branch `main`, folder `/`) — then open the URL and choose
-*Add to Home Screen*.
+## Hosting on GitHub Pages
+
+`.github/workflows/pages.yml` runs the tests and publishes the site on every push to `main`.
+
+One-time setup: in the repo go to **Settings → Pages → Build and deployment → Source** and pick
+**GitHub Actions**. The next push to `main` (or *Actions → Deploy to GitHub Pages → Run workflow*)
+publishes it at `https://<your-username>.github.io/PTO-Tracker/`. Open that on your phone and
+choose *Add to Home Screen*.
 
 ## Files
 
 - `pto.js`: projection engine (paydays, accrual, cap, low point, safe-to-use); pure functions
 - `app.js`: UI
-- `index.html`, `styles.css`: layout and styles (light and dark)
+- `index.html`, `styles.css`: layout and Material 3 styling (color roles generated from a teal seed, light and dark; Roboto + Material Symbols from Google Fonts)
 - `sw.js`, `manifest.webmanifest`, `icons/`: offline support and installability
 - `tests/`: unit tests for `pto.js`
