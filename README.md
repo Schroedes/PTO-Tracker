@@ -10,6 +10,11 @@ seeing the consequences of taking time off before you commit to it.
   end-of-day balance with accruals (green dot = payday) and planned time off included.
 - **Plan time off.** Tap a day, set the hours (quick 2h / 4h / full-day buttons or ±), add a note.
   Use *Repeat for multiple days* to book a whole vacation at once (optionally skipping weekends).
+- **Cancel a whole trip at once.** Days booked together are kept as one trip. Open any day of it
+  and tap **Remove trip** to delete every day in one go; the snackbar's **Undo** brings it back.
+  Older back-to-back entries (separated only by weekends) are treated as one trip too. The planned
+  list shows each trip as a single row. To clear an arbitrary span, set hours to 0 with
+  *Repeat for multiple days* and tap **Remove N days**.
 - **See the consequences before saving.** While you edit, the sheet shows:
   - your balance after that day, before → after
   - the lowest your balance will get afterwards, considering everything else you've planned

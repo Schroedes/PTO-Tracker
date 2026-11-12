@@ -201,9 +201,54 @@
     for (const iso of Object.keys(changes)) {
       const c = changes[iso];
       if (!c || !(Number(c.hours) > 0)) delete entries[iso];
-      else entries[iso] = { hours: Number(c.hours), note: c.note || '' };
+      else {
+        entries[iso] = { hours: Number(c.hours), note: c.note || '' };
+        if (c.trip) entries[iso].trip = c.trip;
+      }
     }
     return { settings: state.settings, entries };
+  }
+
+  function isWeekend(iso) {
+    const w = dayOfWeek(iso);
+    return w === 0 || w === 6;
+  }
+
+  /**
+   * All dates in the trip that `iso` belongs to, ascending.
+   * Entries saved together share a `trip` id. Entries without one (e.g. saved before trips
+   * existed) form a trip with neighbouring untagged entries when only weekend days separate them.
+   */
+  function tripDates(entries, iso) {
+    const e = entries[iso];
+    if (!e) return [];
+    if (e.trip) return Object.keys(entries).filter((d) => entries[d].trip === e.trip).sort();
+    const out = [iso];
+    for (const dir of [-1, 1]) {
+      let n = toDayNum(iso);
+      for (;;) {
+        n += dir;
+        let d = fromDayNum(n);
+        while (!entries[d] && isWeekend(d)) { n += dir; d = fromDayNum(n); }
+        if (entries[d] && !entries[d].trip) out.push(d);
+        else break;
+      }
+    }
+    return out.sort();
+  }
+
+  /** Split the given dates into trips (arrays of dates), in date order. */
+  function groupTrips(entries, dates) {
+    const wanted = new Set(dates);
+    const seen = new Set();
+    const trips = [];
+    for (const d of dates.slice().sort()) {
+      if (seen.has(d)) continue;
+      const trip = tripDates(entries, d).filter((x) => wanted.has(x));
+      trip.forEach((x) => seen.add(x));
+      trips.push(trip);
+    }
+    return trips;
   }
 
   /** ISO dates from startIso..endIso inclusive, optionally skipping Sat/Sun. */
@@ -260,6 +305,6 @@
   return {
     toDayNum, fromDayNum, addDays, dayOfWeek, daysInMonth, isoFromParts, todayIso, round2,
     paydaysBetween, nextPayday, buildTimeline, balanceOn, lowPoint, safeToUse,
-    earliestAffordable, withChanges, dateRange, horizonFor, analyzeChange,
+    earliestAffordable, withChanges, dateRange, isWeekend, tripDates, groupTrips, horizonFor, analyzeChange,
   };
 });

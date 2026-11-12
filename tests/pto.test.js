@@ -110,3 +110,34 @@ test('dates are DST-safe', () => {
   assert.equal(PTO.addDays('2026-11-01', 1), '2026-11-02');
   assert.equal(PTO.dayOfWeek('2026-11-12'), 4);
 });
+
+test('withChanges keeps trip ids', () => {
+  const st = PTO.withChanges(base(), { '2026-12-01': { hours: 8, note: 'x', trip: 't1' } });
+  assert.deepEqual(st.entries['2026-12-01'], { hours: 8, note: 'x', trip: 't1' });
+});
+
+test('tripDates uses the trip id when present', () => {
+  const e = {
+    '2026-12-21': { hours: 8, trip: 'a' }, '2026-12-22': { hours: 8, trip: 'a' },
+    '2026-12-23': { hours: 8, trip: 'b' }, '2026-12-28': { hours: 8, trip: 'a' },
+  };
+  assert.deepEqual(PTO.tripDates(e, '2026-12-22'), ['2026-12-21', '2026-12-22', '2026-12-28']);
+  assert.deepEqual(PTO.tripDates(e, '2026-12-23'), ['2026-12-23']);
+  assert.deepEqual(PTO.tripDates(e, '2026-12-24'), []);
+});
+
+test('untagged entries group across weekends but not across weekdays', () => {
+  const e = {
+    '2026-12-17': { hours: 8 }, '2026-12-18': { hours: 8 }, // Thu, Fri
+    '2026-12-21': { hours: 8 }, '2026-12-22': { hours: 8 }, // Mon, Tue (weekend between)
+    '2026-12-24': { hours: 8 },                             // Thu (Wed gap → separate)
+    '2026-12-25': { hours: 8, trip: 'x' },                  // tagged → separate
+  };
+  assert.deepEqual(PTO.tripDates(e, '2026-12-21'), ['2026-12-17', '2026-12-18', '2026-12-21', '2026-12-22']);
+  assert.deepEqual(PTO.tripDates(e, '2026-12-24'), ['2026-12-24']);
+  assert.deepEqual(PTO.groupTrips(e, Object.keys(e)), [
+    ['2026-12-17', '2026-12-18', '2026-12-21', '2026-12-22'], ['2026-12-24'], ['2026-12-25'],
+  ]);
+  // Restricting to a subset (e.g. upcoming only) trims trips to that subset.
+  assert.deepEqual(PTO.groupTrips(e, ['2026-12-22', '2026-12-24']), [['2026-12-22'], ['2026-12-24']]);
+});

@@ -3,6 +3,8 @@
   'use strict';
   const P = window.PTO;
   const STORAGE_KEY = 'pto-tracker:v1';
+  // Must be defined before load() runs below (const is not hoisted).
+  const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
   const $ = (id) => document.getElementById(id);
 
   // ---------- State ----------
@@ -38,7 +40,6 @@
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
     catch (e) { toast('Could not save — storage is unavailable'); }
   }
-  const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
   function valid(s) {
     return s && s.settings && ISO_RE.test(s.settings.asOfDate) && typeof s.entries === 'object';
   }
@@ -47,7 +48,9 @@
     const settings = Object.assign({}, d, s.settings);
     const entries = {};
     for (const [k, v] of Object.entries(s.entries || {})) {
-      if (ISO_RE.test(k) && v && Number(v.hours) > 0) entries[k] = { hours: Number(v.hours), note: String(v.note || '') };
+      if (!ISO_RE.test(k) || !v || !(Number(v.hours) > 0)) continue;
+      entries[k] = { hours: Number(v.hours), note: String(v.note || '') };
+      if (v.trip) entries[k].trip = String(v.trip);
     }
     return { settings, entries };
   }
@@ -211,25 +214,34 @@
     const past = dates.filter((d) => d < today);
     const total = upcoming.reduce((a, d) => a + state.entries[d].hours, 0);
     $('planned-total').textContent = upcoming.length ? h(total) + ' · ' + upcoming.length + (upcoming.length === 1 ? ' day' : ' days') : '';
-    const row = (d) => {
+    // One row per trip; a single day is just a one-day trip.
+    const row = (trip) => {
+      const d = trip[0];
+      const last = trip[trip.length - 1];
       const e = state.entries[d];
-      const b = P.balanceOn(tl, d);
-      const after = isCounted(d) ? 'already counted' : 'leaves ' + h(b);
+      const hours = trip.reduce((a, x) => a + state.entries[x].hours, 0);
+      const b = P.balanceOn(tl, last);
+      const after = isCounted(last) ? 'already counted' : 'leaves ' + h(b);
+      const year = d.slice(0, 4) !== today.slice(0, 4) ? ' ' + d.slice(0, 4) : '';
+      const when = trip.length > 1
+        ? '<span class="range">' + esc(shortDate(d)) + ' – ' + esc(shortDate(last)) + year + ' · ' + trip.length + ' days</span>'
+        : esc(fmtDate(d, { weekday: 'long' })) + year;
+      const note = trip.map((x) => state.entries[x].note).find((n) => n) || '';
       return '<li><button type="button" data-date="' + d + '">' +
         '<span class="avatar" aria-hidden="true"><span><small>' + esc(fmtDate(d, { month: 'short' })) + '</small>' + Number(d.slice(8)) + '</span></span>' +
-        '<span class="when">' + esc(fmtDate(d, { weekday: 'long' })) + (d.slice(0, 4) !== today.slice(0, 4) ? ' ' + d.slice(0, 4) : '') + '</span>' +
-        '<span class="hrs">−' + esc(h(e.hours)) + '</span>' +
-        '<span class="note">' + esc(e.note || '') + '</span>' +
-        '<span class="after' + (b !== null && b < 0 && !isCounted(d) ? ' neg' : '') + '">' + esc(after) + '</span>' +
+        '<span class="when">' + when + '</span>' +
+        '<span class="hrs">−' + esc(h(hours)) + '</span>' +
+        '<span class="note">' + esc(note || e.note || '') + '</span>' +
+        '<span class="after' + (b !== null && b < 0 && !isCounted(last) ? ' neg' : '') + '">' + esc(after) + '</span>' +
         '</button></li>';
     };
-    $('upcoming-list').innerHTML = upcoming.length ? upcoming.map(row).join('')
+    $('upcoming-list').innerHTML = upcoming.length ? P.groupTrips(state.entries, upcoming).map(row).join('')
       : '<li class="empty">Nothing planned yet. Tap a day on the calendar to add time off.</li>';
     const tp = $('toggle-past');
     tp.hidden = past.length === 0;
     tp.textContent = (showPast ? 'Hide' : 'Show') + ' past time off (' + past.length + ')';
     $('past-list').hidden = !showPast || past.length === 0;
-    $('past-list').innerHTML = past.slice().reverse().map(row).join('');
+    $('past-list').innerHTML = P.groupTrips(state.entries, past).reverse().map(row).join('');
   }
 
   // ---------- Day sheet ----------
@@ -267,6 +279,7 @@
     $('day-through').min = iso;
     $('range-box').open = false;
     $('day-delete').hidden = !entry;
+    renderTripBox(iso);
     $('day-save').textContent = entry ? 'Update' : 'Save';
 
     const dh = Number(state.settings.defaultHours) || 8;
@@ -276,6 +289,29 @@
 
     updateImpact();
     $('day-sheet').showModal();
+  }
+
+  function renderTripBox(iso) {
+    const trip = P.tripDates(state.entries, iso);
+    const box = $('trip-box');
+    $('day-delete-label').textContent = trip.length > 1 ? 'Remove day' : 'Remove';
+    if (trip.length < 2) { box.hidden = true; return; }
+    const hours = trip.reduce((a, d) => a + state.entries[d].hours, 0);
+    $('trip-title').textContent = 'Part of a ' + trip.length + '-day trip';
+    $('trip-sub').textContent = shortDay(trip[0]) + ' – ' + shortDay(trip[trip.length - 1]) + ' · ' + h(hours);
+    const changes = {};
+    for (const d of trip) changes[d] = null;
+    const r = P.analyzeChange(state, changes, today, horizon());
+    const counted = trip.filter(isCounted).length;
+    // Days on/before the stub date are already in the balance, so removing them gives nothing back.
+    const back = trip.filter((d) => !isCounted(d)).reduce((a, d) => a + state.entries[d].hours, 0);
+    let msg = '';
+    if (back > 0) {
+      msg = 'Removing it gives back ' + h(back) + '. Lowest point ahead: ' + h(r.lowBefore.min) + ' → ' + h(r.lowAfter.min) + '.';
+    }
+    if (counted) msg += (msg ? ' ' : '') + counted + ' of these days are already in your stub balance and won’t change it.';
+    $('trip-impact').textContent = msg;
+    box.hidden = false;
   }
 
   function pendingChanges() {
@@ -301,6 +337,9 @@
     const hz = horizon();
     const r = P.analyzeChange(state, changes, today, hz);
     const multi = dates.length > 1;
+    const booked = dates.filter((d) => state.entries[d]).length;
+    $('day-save').textContent = hours > 0 ? (state.entries[sheetDate] && !multi ? 'Update' : 'Save')
+      : booked > 1 ? 'Remove ' + booked + ' days' : booked === 1 ? 'Remove' : 'Save';
 
     if (multi) {
       out.push(row(dates.length + ' days (' + esc(shortDate(dates[0])) + ' – ' + esc(shortDate(dates[dates.length - 1])) + ')',
@@ -363,22 +402,56 @@
     }
   }
 
+  function newTripId() {
+    return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+
   function saveDay() {
     const { changes, dates, hours } = pendingChanges();
+    if (hours > 0) {
+      // Days booked together become one trip so they can be removed together later.
+      // Editing a single day keeps it in whatever trip it already belongs to.
+      const existing = state.entries[sheetDate];
+      const trip = dates.length > 1 ? newTripId() : existing && existing.trip;
+      if (trip) for (const d of dates) changes[d].trip = trip;
+    }
+    const prev = state;
     state = P.withChanges(state, changes);
     save();
     $('day-sheet').close();
     render();
     if (hours > 0) toast(dates.length > 1 ? 'Saved ' + dates.length + ' days · ' + h(hours * dates.length) : 'Saved ' + h(hours) + ' on ' + shortDate(dates[0]));
-    else toast('Removed time off');
+    else toast('Removed ' + (dates.length > 1 ? dates.length + ' days' : 'time off'), () => restore(prev));
+  }
+
+  function restore(prev) {
+    state = prev;
+    save();
+    render();
+    toast('Restored');
   }
 
   function deleteDay() {
+    const prev = state;
     state = P.withChanges(state, { [sheetDate]: null });
     save();
     $('day-sheet').close();
     render();
-    toast('Removed time off on ' + shortDate(sheetDate));
+    toast('Removed time off on ' + shortDate(sheetDate), () => restore(prev));
+  }
+
+  function deleteTrip() {
+    const trip = P.tripDates(state.entries, sheetDate);
+    if (!trip.length) return;
+    const hours = trip.reduce((a, d) => a + state.entries[d].hours, 0);
+    const changes = {};
+    for (const d of trip) changes[d] = null;
+    const prev = state;
+    state = P.withChanges(state, changes);
+    save();
+    $('day-sheet').close();
+    render();
+    toast('Removed ' + trip.length + ' days · ' + h(hours), () => restore(prev));
   }
 
   // ---------- Settings ----------
@@ -455,14 +528,25 @@
 
   // ---------- Misc UI ----------
   let toastTimer;
-  function toast(msg) {
+  function toast(msg, undo) {
     const t = $('toast');
-    t.textContent = msg;
+    t.textContent = '';
+    const span = document.createElement('span');
+    span.textContent = msg;
+    t.appendChild(span);
+    if (undo) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'button text';
+      b.textContent = 'Undo';
+      b.addEventListener('click', () => { t.hidden = true; undo(); }, { once: true });
+      t.appendChild(b);
+    }
     t.hidden = true;
     void t.offsetWidth; // restart the enter animation
     t.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+    toastTimer = setTimeout(() => { t.hidden = true; }, undo ? 6000 : 2600);
   }
   function goToMonth(iso) {
     view = { year: Number(iso.slice(0, 4)), month: Number(iso.slice(5, 7)) - 1 };
@@ -550,6 +634,7 @@
     saveDay();
   });
   $('day-delete').addEventListener('click', deleteDay);
+  $('trip-delete').addEventListener('click', deleteTrip);
 
   // Settings sheet
   const setForm = $('settings-form');
