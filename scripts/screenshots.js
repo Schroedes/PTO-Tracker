@@ -6,7 +6,7 @@
 const { chromium } = require('playwright');
 const OUT = process.argv[2] || require('path').join(__dirname, '..', 'docs', 'screenshots');
 const URL = 'http://localhost:8080/';
-// Realistic seed: stub balance, a month-long trip, older back-to-back days, a personal-days bank, a leave.
+// Example data: stub balance, a dentist visit, a month-long trip, a personal-days bank and a leave.
 function seed() {
   const entries = {};
   const start = Date.UTC(2027, 0, 4);
