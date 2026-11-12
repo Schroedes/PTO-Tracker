@@ -234,6 +234,23 @@ main { max-width: 720px; margin: 0 auto; padding: 4px 16px 104px; }
 }
 .card.stat .stat-value { font-variant-numeric: tabular-nums; margin: 2px 0; }
 
+/* ---------- Personal-day banks on the home screen ---------- */
+.banks { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.bank-card {
+  display: grid; grid-template-columns: 40px 1fr auto; align-items: center; gap: 0 16px;
+  padding: 12px 16px; border: 0; border-radius: var(--md-sys-shape-md); text-align: left; width: 100%;
+  background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container);
+}
+.bank-card .bank-icon {
+  display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--md-sys-shape-full);
+  background: var(--md-sys-color-secondary); color: var(--md-sys-color-on-secondary);
+}
+.bank-card .bank-text { display: flex; flex-direction: column; min-width: 0; }
+.bank-card .bank-left { font-size: 22px; line-height: 28px; font-variant-numeric: tabular-nums; text-align: right; }
+.bank-card .bank-left small { display: block; font-size: 12px; line-height: 16px; opacity: .8; }
+.bank-card .bank-warn { color: var(--md-custom-color-warning); font-weight: 500; }
+@media (prefers-color-scheme: light) { .bank-card .bank-warn { color: #6b4a00; } }
+
 /* ---------- Alerts (filled cards in container colors) ---------- */
 .alerts { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .alert-item {
@@ -297,6 +314,13 @@ main { max-width: 720px; margin: 0 auto; padding: 4px 16px 104px; }
 }
 .day.payday .num::after { right: 6px; background: var(--md-custom-color-success); }
 .day.capped::before { left: 6px; background: var(--md-custom-color-warning); border-radius: 1px; }
+.day.off.bank { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.day.off.bank .used { color: var(--md-sys-color-on-secondary-container); }
+.day.off.bank .bal { color: var(--md-sys-color-on-secondary-container); }
+.day.grant:not(.capped)::before {
+  content: ""; position: absolute; top: 5px; left: 5px; width: 8px; height: 8px; border-radius: 50%;
+  box-shadow: inset 0 0 0 2px var(--md-sys-color-secondary);
+}
 @media (min-width: 600px) { .day { min-height: 80px; } .day .bal, .day .used { font-size: 12px; } }
 
 .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 12px 8px 4px; color: var(--md-sys-color-on-surface-variant); }
@@ -305,6 +329,8 @@ main { max-width: 720px; margin: 0 auto; padding: 4px 16px 104px; }
 .lg-off { background: var(--md-sys-color-tertiary-container); box-shadow: inset 0 0 0 1px var(--md-sys-color-tertiary); }
 .lg-neg { background: var(--md-sys-color-error-container); box-shadow: inset 0 0 0 1px var(--md-sys-color-error); }
 .lg-cap { background: var(--md-custom-color-warning); border-radius: 1px; }
+.lg-bank { background: var(--md-sys-color-secondary-container); box-shadow: inset 0 0 0 1px var(--md-sys-color-secondary); }
+.lg-grant { border-radius: 50%; box-shadow: inset 0 0 0 2px var(--md-sys-color-secondary); }
 
 /* ---------- Lists ---------- */
 .section-head { display: flex; align-items: baseline; justify-content: space-between; padding: 8px 8px 4px; }
@@ -329,6 +355,8 @@ main { max-width: 720px; margin: 0 auto; padding: 4px 16px 104px; }
 .list .empty { padding: 16px 8px; color: var(--md-sys-color-on-surface-variant); font-size: 14px; }
 .list.past .avatar { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant); }
 .list.past .hrs { color: var(--md-sys-color-on-surface-variant); }
+.list .bank-row .avatar { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.list .bank-row .hrs { color: var(--md-sys-color-secondary); }
 #toggle-past { margin: 4px 0; }
 
 /* ---------- Bottom sheets ---------- */
@@ -360,6 +388,33 @@ dialog.sheet[open] { animation: sheet-in 300ms var(--md-sys-motion-emphasized-de
 
 .stat-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 0; }
 .tile { display: flex; flex-direction: column; gap: 2px; padding: 12px 16px; border-radius: var(--md-sys-shape-md); background: var(--md-sys-color-surface-container-highest); }
+
+/* ---------- Segmented button ---------- */
+.bank-pick { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 0; }
+.segmented { display: flex; overflow-x: auto; scrollbar-width: none; }
+.segmented button {
+  position: relative; overflow: hidden; isolation: isolate;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: 1 0 auto;
+  min-height: 40px; padding: 0 12px; margin-left: -1px;
+  border: 1px solid var(--md-sys-color-outline); background: transparent; color: var(--md-sys-color-on-surface);
+  font-size: 14px; line-height: 20px; font-weight: 500; letter-spacing: .1px; white-space: nowrap;
+}
+.segmented button:first-child { margin-left: 0; border-radius: var(--md-sys-shape-full) 0 0 var(--md-sys-shape-full); }
+.segmented button:last-child { border-radius: 0 var(--md-sys-shape-full) var(--md-sys-shape-full) 0; }
+.segmented button[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.segmented button .icon { font-size: 18px; display: none; }
+.segmented button[aria-pressed="true"] .icon { display: inline-block; }
+.segmented button::after { content: ""; position: absolute; inset: 0; z-index: -1; background: currentColor; opacity: 0; }
+.segmented button:active::after { opacity: .1; }
+@media (hover: hover) { .segmented button:hover::after { opacity: .08; } }
+
+/* ---------- Bank editor (settings) ---------- */
+.bank-editor {
+  margin: 8px 0 12px; padding: 4px 12px 8px; border-radius: var(--md-sys-shape-md);
+  background: var(--md-sys-color-surface-container);
+}
+.bank-editor .three { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.bank-editor .remove-bank { margin-top: 4px; }
 
 /* ---------- Trip card ---------- */
 .trip-card {

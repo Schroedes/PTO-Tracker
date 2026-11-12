@@ -15,6 +15,9 @@
   let view = { year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) - 1 };
   let showPast = false;
   let sheetDate = null;
+  let sheetBank = 'pto';
+  const MONTHS = Array.from({ length: 12 }, (_, i) =>
+    new Intl.DateTimeFormat(undefined, { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2000, i, 1))));
 
   function defaultState() {
     const t = P.todayIso();
@@ -26,6 +29,7 @@
         anchorPayday: P.addDays(t, toFri), cap: null, defaultHours: 8,
       },
       entries: {},
+      banks: [],
     };
   }
   function load() {
@@ -51,8 +55,18 @@
       if (!ISO_RE.test(k) || !v || !(Number(v.hours) > 0)) continue;
       entries[k] = { hours: Number(v.hours), note: String(v.note || '') };
       if (v.trip) entries[k].trip = String(v.trip);
+      if (v.bank && v.bank !== 'pto') entries[k].bank = String(v.bank);
     }
-    return { settings, entries };
+    const banks = (Array.isArray(s.banks) ? s.banks : []).filter((b) => b && b.id).map((b) => ({
+      id: String(b.id), name: String(b.name || 'Personal days'), unit: b.unit === 'hours' ? 'hours' : 'days',
+      amount: Number(b.amount) || 0, startingBalance: Number(b.startingBalance) || 0,
+      month: Math.min(12, Math.max(1, Number(b.month) || 1)), day: Math.min(31, Math.max(1, Number(b.day) || 1)),
+      expiry: ['next-grant', 'year-end', 'never'].includes(b.expiry) ? b.expiry : 'next-grant',
+    }));
+    // Entries pointing at a bank that no longer exists fall back to PTO.
+    const ids = new Set(banks.map((b) => b.id));
+    for (const e of Object.values(entries)) if (e.bank && !ids.has(e.bank)) delete e.bank;
+    return { settings, entries, banks };
   }
 
   // ---------- Formatting ----------
@@ -92,12 +106,50 @@
     return P.round2(t);
   }
   const isCounted = (iso) => P.toDayNum(iso) <= P.toDayNum(state.settings.asOfDate);
+  const banks = () => state.banks || [];
+  const bankById = (id) => banks().find((b) => b.id === id) || null;
+  const entryBank = (e) => (e && e.bank ? bankById(e.bank) : null);
+  function bankTimeline(bank, st) {
+    return P.buildBankTimeline(st || state, bank, horizon());
+  }
+  function bankBalanceOn(btl, iso) {
+    const d = btl.days.get(iso);
+    if (d) return d.balance;
+    return P.toDayNum(iso) < P.toDayNum(btl.start) ? btl.days.get(btl.start).balance : null;
+  }
+  /** "24h" or "24h (3 days)" for banks counted in days. */
+  function bankAmount(bank, hours) {
+    if (bank.unit !== 'days') return h(hours);
+    const days = P.round2(hours / (Number(state.settings.defaultHours) || 8));
+    return h(hours) + ' (' + num(days) + (Math.abs(days) === 1 ? ' day)' : ' days)');
+  }
+  /** Lowest bank balance in [fromIso, end] (null if none). */
+  function bankLow(btl, fromIso) {
+    let min = Infinity, minDate = null;
+    const from = Math.max(P.toDayNum(fromIso), P.toDayNum(btl.start));
+    for (let n = from; n <= P.toDayNum(btl.end); n++) {
+      const iso = P.fromDayNum(n);
+      const b = btl.days.get(iso).balance;
+      if (b < min) { min = b; minDate = iso; }
+    }
+    return minDate ? { min: P.round2(min), minDate } : null;
+  }
+  /** Next loss of unused hours on/after fromIso: { date (last usable day), hours }. */
+  function nextBankLoss(btl, fromIso) {
+    for (let n = Math.max(P.toDayNum(fromIso), P.toDayNum(btl.start) + 1); n <= P.toDayNum(btl.end); n++) {
+      const iso = P.fromDayNum(n);
+      const d = btl.days.get(iso);
+      if (d.lost > 0) return { date: P.addDays(iso, -1), hours: d.lost };
+    }
+    return null;
+  }
 
   // ---------- Render ----------
   function render() {
     today = P.todayIso();
     const tl = timeline();
     renderSummary(tl);
+    renderBanks();
     renderAlerts(tl);
     renderCalendar(tl);
     renderList(tl);
@@ -140,6 +192,29 @@
     $('card-eoy').dataset.date = eoy;
   }
 
+  function renderBanks() {
+    const box = $('banks');
+    const list = banks();
+    box.hidden = list.length === 0;
+    const ref = P.toDayNum(today) < P.toDayNum(state.settings.asOfDate) ? state.settings.asOfDate : today;
+    box.innerHTML = list.map((b) => {
+      const btl = bankTimeline(b);
+      const left = bankBalanceOn(btl, ref);
+      const next = P.grantDatesBetween(b, P.addDays(today, -1), P.addDays(today, 367))[0];
+      const loss = nextBankLoss(btl, today);
+      let sub = next ? 'Next: +' + bankAmount(b, P.bankHours(b, b.amount, state.settings.defaultHours)) + ' on ' + shortDate(next) : '';
+      const warn = loss ? '<span class="bank-warn">' + esc(h(loss.hours)) + ' unused will expire after ' + esc(shortDate(loss.date)) + '</span>' : '';
+      const unit = b.unit === 'days' ? P.round2(left / (Number(state.settings.defaultHours) || 8)) : null;
+      return '<button type="button" class="bank-card" data-date="' + esc(loss ? loss.date : next || today) + '">' +
+        '<span class="bank-icon"><span class="icon" aria-hidden="true">redeem</span></span>' +
+        '<span class="bank-text"><span class="title-small">' + esc(b.name) + '</span>' +
+        '<span class="body-small">' + esc(sub) + '</span>' + (warn ? '<span class="body-small">' + warn + '</span>' : '') + '</span>' +
+        '<span class="bank-left' + (left < 0 ? ' neg' : '') + '">' + esc(h(left)) +
+        (unit !== null ? '<small>' + esc(num(unit)) + (Math.abs(unit) === 1 ? ' day' : ' days') + ' left</small>' : '<small>left</small>') + '</span>' +
+        '</button>';
+    }).join('');
+  }
+
   function renderAlerts(tl) {
     const box = $('alert');
     const items = [];
@@ -157,6 +232,13 @@
     if (lost > 0) {
       items.push(['warn', 'You’ll hit your cap and lose <b>' + esc(h(lost)) + '</b> of accrual over the next year, starting ' +
         esc(shortDate(firstLost)) + '. Plan some time off before then.', firstLost, 'View']);
+    }
+    for (const b of banks()) {
+      const loss = nextBankLoss(bankTimeline(b), today);
+      if (loss && P.toDayNum(loss.date) - P.toDayNum(today) <= 60) {
+        items.push(['warn', '<b>' + esc(h(loss.hours)) + '</b> of ' + esc(b.name) + ' will expire after <b>' +
+          esc(shortDay(loss.date)) + '</b>. Book them before then.', loss.date, 'View']);
+      }
     }
     const age = P.toDayNum(today) - P.toDayNum(state.settings.asOfDate);
     if (age > 45) {
@@ -179,6 +261,13 @@
     const cells = Math.ceil((P.dayOfWeek(first) + dim) / 7) * 7;
     const cap = state.settings.cap;
     const todayNum = P.toDayNum(today);
+    const grantDays = new Map();
+    for (const b of banks()) {
+      for (const g of P.grantDatesBetween(b, P.addDays(start, -1), P.addDays(start, cells))) grantDays.set(g, b);
+    }
+    const bl = banks();
+    $('lg-bank').hidden = $('lg-grant').hidden = bl.length === 0;
+    $('lg-bank-label').textContent = bl.length === 1 ? bl[0].name : 'Personal day';
     let html = '';
     for (let i = 0; i < cells; i++) {
       const iso = P.addDays(start, i);
@@ -190,6 +279,8 @@
       if (iso === today) cls.push('today');
       if (n < todayNum) cls.push('past');
       if (entry) cls.push('off');
+      if (entry && entryBank(entry)) cls.push('bank');
+      if (grantDays.has(iso)) cls.push('grant');
       if (entry && isCounted(iso)) cls.push('counted');
       if (d && d.payday) cls.push('payday');
       if (d && d.balance < 0) cls.push('negative');
@@ -197,7 +288,8 @@
       else if (d && cap !== null && cap !== '' && d.balance >= Number(cap) && d.payday) cls.push('capped');
       const label = [longDay(iso)];
       if (d) label.push('balance ' + h(d.balance));
-      if (entry) label.push(h(entry.hours) + ' off');
+      if (entry) label.push(h(entry.hours) + ' off' + (entryBank(entry) ? ' from ' + entryBank(entry).name : ''));
+      if (grantDays.has(iso)) label.push(grantDays.get(iso).name + ' granted');
       if (d && d.payday) label.push('payday');
       html += '<button type="button" class="' + cls.join(' ') + '" data-date="' + iso + '" aria-label="' + esc(label.join(', ')) + '">' +
         '<span class="num">' + Number(iso.slice(8)) + '</span>' +
@@ -220,14 +312,16 @@
       const last = trip[trip.length - 1];
       const e = state.entries[d];
       const hours = trip.reduce((a, x) => a + state.entries[x].hours, 0);
-      const b = P.balanceOn(tl, last);
-      const after = isCounted(last) ? 'already counted' : 'leaves ' + h(b);
+      const bank = entryBank(state.entries[last]);
+      const b = bank ? bankBalanceOn(bankTimeline(bank), last) : P.balanceOn(tl, last);
+      const after = isCounted(last) ? 'already counted' : bank ? h(b) + ' left' : 'leaves ' + h(b);
       const year = d.slice(0, 4) !== today.slice(0, 4) ? ' ' + d.slice(0, 4) : '';
       const when = trip.length > 1
         ? '<span class="range">' + esc(shortDate(d)) + ' – ' + esc(shortDate(last)) + year + ' · ' + trip.length + ' days</span>'
         : esc(fmtDate(d, { weekday: 'long' })) + year;
-      const note = trip.map((x) => state.entries[x].note).find((n) => n) || '';
-      return '<li><button type="button" data-date="' + d + '">' +
+      let note = trip.map((x) => state.entries[x].note).find((n) => n) || '';
+      if (bank) note = bank.name + (note ? ' · ' + note : '');
+      return '<li' + (bank ? ' class="bank-row"' : '') + '><button type="button" data-date="' + d + '">' +
         '<span class="avatar" aria-hidden="true"><span><small>' + esc(fmtDate(d, { month: 'short' })) + '</small>' + Number(d.slice(8)) + '</span></span>' +
         '<span class="when">' + when + '</span>' +
         '<span class="hrs">−' + esc(h(hours)) + '</span>' +
@@ -260,18 +354,16 @@
       tags.push('<span class="tag pay"><span class="icon" aria-hidden="true">payments</span>Payday ' + esc(signed(d.accrued)) + '</span>');
       if (d.lost > 0) tags.push('<span class="tag warn"><span class="icon" aria-hidden="true">warning</span>' + esc(h(d.lost)) + ' lost to cap</span>');
     }
+    for (const b of banks()) {
+      const bd = bankTimeline(b).days.get(iso);
+      if (bd && bd.granted > 0) tags.push('<span class="tag pay"><span class="icon" aria-hidden="true">redeem</span>' + esc(b.name) + ' +' + esc(h(bd.granted)) + '</span>');
+      if (bd && bd.lost > 0) tags.push('<span class="tag warn"><span class="icon" aria-hidden="true">warning</span>' + esc(h(bd.lost)) + ' ' + esc(b.name) + ' expired</span>');
+    }
     if (isCounted(iso)) tags.push('<span class="tag">Before balance date — already counted</span>');
     $('day-tags').innerHTML = tags.join('');
 
-    $('day-balance').textContent = d ? h(d.balance) : '–';
-    $('day-balance').classList.toggle('neg', !!d && d.balance < 0);
-    if (d && !isCounted(iso)) {
-      const without = P.buildTimeline(P.withChanges(state, { [iso]: null }), horizon());
-      $('day-safe').textContent = h(P.safeToUse(without, iso));
-    } else {
-      $('day-safe').textContent = '–';
-    }
-    $('day-safe').classList.remove('neg');
+    sheetBank = entry && entryBank(entry) ? entry.bank : 'pto';
+    renderBankPicker();
 
     $('day-hours').value = entry ? entry.hours : state.settings.defaultHours;
     $('day-note').value = entry ? entry.note : '';
@@ -289,6 +381,46 @@
 
     updateImpact();
     $('day-sheet').showModal();
+  }
+
+  function renderBankPicker() {
+    const list = banks();
+    $('bank-pick').hidden = list.length === 0;
+    const opts = [{ id: 'pto', name: 'PTO' }].concat(list);
+    $('bank-seg').innerHTML = opts.map((o) =>
+      '<button type="button" data-bank="' + esc(o.id) + '" aria-pressed="' + (o.id === sheetBank) + '">' +
+      '<span class="icon" aria-hidden="true">check</span>' + esc(o.name) + '</button>').join('');
+    renderTiles();
+  }
+
+  /** The two stat tiles describe whichever bank the hours come from. */
+  function renderTiles() {
+    const iso = sheetDate;
+    const bank = bankById(sheetBank);
+    const counted = isCounted(iso);
+    if (!bank) {
+      const d = timeline().days.get(iso);
+      $('day-balance-label').textContent = 'Projected PTO balance';
+      $('day-safe-label').textContent = 'Safe to use this day';
+      $('day-balance').textContent = d ? h(d.balance) : '–';
+      $('day-balance').classList.toggle('neg', !!d && d.balance < 0);
+      if (d && !counted) {
+        const without = P.buildTimeline(P.withChanges(state, { [iso]: null }), horizon());
+        $('day-safe').textContent = h(P.safeToUse(without, iso));
+      } else {
+        $('day-safe').textContent = '–';
+      }
+    } else {
+      const btl = bankTimeline(bank);
+      const bal = bankBalanceOn(btl, iso);
+      $('day-balance-label').textContent = bank.name + ' left';
+      $('day-balance').textContent = bal === null ? '–' : h(bal);
+      $('day-balance').classList.toggle('neg', bal !== null && bal < 0);
+      const exp = P.bankExpiresOn(bank, iso);
+      $('day-safe-label').textContent = 'Use by';
+      $('day-safe').textContent = exp ? shortDate(exp) : 'No expiry';
+    }
+    $('day-safe').classList.remove('neg');
   }
 
   function renderTripBox(iso) {
@@ -325,7 +457,7 @@
       if (dates.length === 0) dates = [iso];
     }
     const changes = {};
-    for (const d of dates) changes[d] = hours > 0 ? { hours, note } : null;
+    for (const d of dates) changes[d] = hours > 0 ? { hours, note, bank: sheetBank } : null;
     return { changes, dates, hours };
   }
 
@@ -352,15 +484,46 @@
       return;
     }
 
+    // Banks touched by this change: the one selected, plus any that existing entries come from.
+    const touched = new Set();
+    if (bankById(sheetBank) && hours > 0) touched.add(sheetBank);
+    for (const d of dates) if (entryBank(state.entries[d])) touched.add(state.entries[d].bank);
+    const bankOut = [];
+    let bankChanged = false;
+    for (const id of touched) {
+      const b = bankById(id);
+      const before = P.buildBankTimeline(state, b, hz);
+      const after = P.buildBankTimeline(r.nextState, b, hz);
+      const bb = bankBalanceOn(before, r.last);
+      const ba = bankBalanceOn(after, r.last);
+      if (bb === ba) continue;
+      bankChanged = true;
+      bankOut.push(row(esc(b.name) + ' after ' + esc(shortDate(r.last)),
+        esc(h(bb)) + '<span class="arrow">→</span><span class="' + (ba < 0 ? 'neg' : '') + '">' + esc(h(ba)) + '</span>'));
+      const low = bankLow(after, r.first);
+      if (ba < bb && low && low.min < 0) {
+        const have = bankBalanceOn(before, r.first) + (state.entries[r.first] && state.entries[r.first].bank === id ? state.entries[r.first].hours : 0);
+        bankOut.push(box('bad', '<b>That’s more ' + esc(b.name) + ' than you’ll have.</b> You’d be at ' + esc(h(low.min)) + ' on ' +
+          esc(shortDay(low.minDate)) + '. You have ' + esc(bankAmount(b, Math.max(0, have))) + ' available on ' + esc(shortDate(r.first)) +
+          ' — use PTO for the rest.'));
+      } else if (ba < bb) {
+        const lostBefore = [...before.days.values()].reduce((a, d) => a + d.lost, 0);
+        const lostAfter = [...after.days.values()].reduce((a, d) => a + d.lost, 0);
+        const exp = P.bankExpiresOn(b, r.first);
+        bankOut.push(box('ok', 'Comes out of ' + esc(b.name) + ', so your PTO isn’t touched.' +
+          (lostAfter < lostBefore && exp ? ' These hours would otherwise expire after ' + esc(shortDate(exp)) + '.' : '')));
+      }
+    }
+
     if (r.deltaHours === 0) {
-      out.push(box('info', hours > 0 ? 'No change to your plan.' : 'Enter the hours you’ll take off this day.'));
-      $('impact').innerHTML = out.join('');
+      if (!bankChanged) out.push(box('info', hours > 0 ? 'No change to your plan.' : 'Enter the hours you’ll take off this day.'));
+      $('impact').innerHTML = out.concat(bankOut).join('');
       return;
     }
 
-    out.push(row('Balance after ' + esc(shortDate(r.last)),
+    out.push(row('PTO after ' + esc(shortDate(r.last)),
       esc(h(r.balanceBefore)) + '<span class="arrow">→</span><span class="' + (r.balanceAfter < 0 ? 'neg' : '') + '">' + esc(h(r.balanceAfter)) + '</span>'));
-    out.push(row('Lowest point ahead',
+    out.push(row('Lowest PTO ahead',
       esc(h(r.lowBefore.min)) + '<span class="arrow">→</span><span class="' + (r.lowAfter.min < 0 ? 'neg' : '') + '">' +
       esc(h(r.lowAfter.min)) + '</span> <span class="muted">' + esc(shortDate(r.lowAfter.minDate)) + '</span>'));
 
@@ -374,7 +537,7 @@
         : 'You wouldn’t recover within the projection.';
       if (r.lowBefore.firstNegative) msg += ' (Your plan was already negative before this change.)';
       out.push(box('bad', msg));
-      if (!multi && hours > 0) {
+      if (!multi && hours > 0 && !bankById(sheetBank)) {
         const base = P.buildTimeline(P.withChanges(state, { [sheetDate]: null }), hz);
         const e = P.earliestAffordable(base, today > sheetDate ? today : sheetDate, hours);
         out.push(box('info', e ? 'Earliest you could take ' + esc(h(hours)) + ' without going negative: <b>' + esc(shortDay(e)) + '</b>.'
@@ -393,7 +556,7 @@
       if (after < before) out.push(box('ok', 'Also saves ' + esc(h(before - after)) + ' that would have been lost to your cap.'));
       if (after > before) out.push(box('warn', 'You’d lose ' + esc(h(after - before)) + ' more to your cap.'));
     }
-    $('impact').innerHTML = out.join('');
+    $('impact').innerHTML = out.concat(bankOut).join('');
 
     function row(label, value) { return '<div class="row"><span>' + label + '</span><b>' + value + '</b></div>'; }
     function box(cls, html) {
@@ -464,11 +627,47 @@
     $('s-anchor').value = s.anchorPayday;
     $('s-cap').value = s.cap === null || s.cap === '' ? '' : s.cap;
     $('s-default').value = s.defaultHours;
+    renderBankEditors(banks());
     $('settings-intro').hidden = !firstRun;
     $('settings-close').hidden = firstRun;
     syncAnchorField();
     $('settings-sheet').showModal();
   }
+  function bankEditor(b) {
+    const months = MONTHS.map((m, i) => '<option value="' + (i + 1) + '"' + (Number(b.month) === i + 1 ? ' selected' : '') + '>' + esc(m) + '</option>').join('');
+    const opt = (v, label, cur) => '<option value="' + v + '"' + (cur === v ? ' selected' : '') + '>' + label + '</option>';
+    return '<div class="bank-editor" data-id="' + esc(b.id) + '">' +
+      '<label class="text-field filled"><span class="tf-label">Name</span><input class="b-name" type="text" maxlength="40" value="' + esc(b.name) + '" required></label>' +
+      '<div class="three">' +
+        '<label class="text-field filled"><span class="tf-label">Amount each year</span><input class="b-amount" type="number" inputmode="decimal" step="any" min="0" value="' + esc(b.amount) + '" required></label>' +
+        '<label class="text-field filled select"><span class="tf-label">Counted in</span><select class="b-unit">' + opt('days', 'Days', b.unit) + opt('hours', 'Hours', b.unit) + '</select></label>' +
+        '<label class="text-field filled select"><span class="tf-label">Given every</span><select class="b-month">' + months + '</select></label>' +
+        '<label class="text-field filled"><span class="tf-label">On day</span><input class="b-day" type="number" inputmode="numeric" min="1" max="31" step="1" value="' + esc(b.day) + '" required></label>' +
+        '<label class="text-field filled"><span class="tf-label">Left now</span><input class="b-left" type="number" inputmode="decimal" step="any" min="0" value="' + esc(b.startingBalance) + '" required></label>' +
+        '<label class="text-field filled select"><span class="tf-label">Unused expire</span><select class="b-expiry">' +
+          opt('next-grant', 'At next grant', b.expiry) + opt('year-end', 'On Dec 31', b.expiry) + opt('never', 'Never', b.expiry) +
+        '</select></label>' +
+      '</div>' +
+      '<p class="supporting body-small on-variant">“Left now” is what you have as of your balance date above.</p>' +
+      '<button type="button" class="button text danger remove-bank"><span class="icon" aria-hidden="true">delete</span>Remove</button>' +
+      '</div>';
+  }
+  function renderBankEditors(list) {
+    $('bank-list').innerHTML = list.map(bankEditor).join('');
+  }
+  function readBankEditors() {
+    return [...document.querySelectorAll('#bank-list .bank-editor')].map((el) => ({
+      id: el.dataset.id,
+      name: el.querySelector('.b-name').value.trim() || 'Personal days',
+      unit: el.querySelector('.b-unit').value,
+      amount: Number(el.querySelector('.b-amount').value) || 0,
+      month: Number(el.querySelector('.b-month').value) || 1,
+      day: Math.min(31, Math.max(1, Number(el.querySelector('.b-day').value) || 1)),
+      startingBalance: Number(el.querySelector('.b-left').value) || 0,
+      expiry: el.querySelector('.b-expiry').value,
+    }));
+  }
+
   function syncAnchorField() {
     const semi = $('s-frequency').value === 'semimonthly';
     $('anchor-field').hidden = semi;
@@ -487,11 +686,21 @@
       cap: cap === '' ? null : Number(cap),
       defaultHours: Number($('s-default').value) || 8,
     };
+    state.banks = readBankEditors();
+    // Planned days from a removed bank go back to PTO.
+    const ids = new Set(state.banks.map((b) => b.id));
+    let moved = 0;
+    const entries = {};
+    for (const [d, e] of Object.entries(state.entries)) {
+      entries[d] = Object.assign({}, e);
+      if (e.bank && !ids.has(e.bank)) { delete entries[d].bank; moved++; }
+    }
+    state.entries = entries;
     firstRun = false;
     save();
     $('settings-sheet').close();
     render();
-    toast('Settings saved');
+    toast(moved ? 'Settings saved · ' + moved + (moved === 1 ? ' day moved' : ' days moved') + ' back to PTO' : 'Settings saved');
   }
 
   async function exportData() {
@@ -635,6 +844,31 @@
   });
   $('day-delete').addEventListener('click', deleteDay);
   $('trip-delete').addEventListener('click', deleteTrip);
+  $('bank-seg').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-bank]');
+    if (!b) return;
+    sheetBank = b.dataset.bank;
+    $('bank-seg').querySelectorAll('[data-bank]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.bank === sheetBank)));
+    renderTiles();
+    updateImpact();
+  });
+  $('banks').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-date]');
+    if (b) jumpAndOpen(b.dataset.date);
+  });
+  $('btn-add-bank').addEventListener('click', () => {
+    const current = readBankEditors();
+    current.push({ id: 'b' + Date.now().toString(36), name: 'Personal holidays', unit: 'days', amount: 3,
+      month: 7, day: 1, startingBalance: 0, expiry: 'next-grant' });
+    renderBankEditors(current);
+    const last = $('bank-list').lastElementChild;
+    last.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    last.querySelector('.b-name').select();
+  });
+  $('bank-list').addEventListener('click', (e) => {
+    const rm = e.target.closest('.remove-bank');
+    if (rm) rm.closest('.bank-editor').remove();
+  });
 
   // Settings sheet
   const setForm = $('settings-form');

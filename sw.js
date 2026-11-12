@@ -1,6 +1,6 @@
 // Offline support: serve the app shell from cache and refresh it in the background.
 // Google Fonts (Roboto + Material Symbols) are cached at runtime so icons work offline too.
-const CACHE = 'pto-tracker-v3';
+const CACHE = 'pto-tracker-v4';
 const FONT_CACHE = 'pto-tracker-fonts-v1';
 const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'pto.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];

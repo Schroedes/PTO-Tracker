@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&icon_names=add,check,check_circle,chevron_left,chevron_right,close,date_range,delete,delete_sweep,download,error,event,event_available,expand_more,info,payments,remove,settings,today,upload,warning&display=block">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&icon_names=add,check,check_circle,chevron_left,chevron_right,close,date_range,delete,delete_sweep,download,error,event,event_available,expand_more,info,payments,redeem,remove,settings,today,upload,warning&display=block">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -52,6 +52,8 @@
       </button>
     </section>
 
+    <section id="banks" class="banks" aria-label="Personal days" hidden></section>
+
     <div id="alert" class="alerts" hidden></div>
 
     <section class="card outlined calendar" aria-label="Calendar">
@@ -73,6 +75,8 @@
         <span><i class="lg lg-off"></i>Time off</span>
         <span><i class="lg lg-neg"></i>Negative</span>
         <span><i class="lg lg-cap"></i>At cap</span>
+        <span id="lg-bank" hidden><i class="lg lg-bank"></i><span id="lg-bank-label">Personal day</span></span>
+        <span id="lg-grant" hidden><i class="lg lg-grant"></i>Days granted</span>
       </div>
     </section>
 
@@ -103,9 +107,14 @@
         <button class="icon-button" value="cancel" formnovalidate aria-label="Close"><span class="icon" aria-hidden="true">close</span></button>
       </div>
 
+      <div class="bank-pick" id="bank-pick" hidden>
+        <span class="label-medium on-variant">Use hours from</span>
+        <div class="segmented" id="bank-seg" role="group" aria-label="Use hours from"></div>
+      </div>
+
       <div class="stat-pair">
-        <div class="tile"><span class="label-medium on-variant">Projected balance</span><span class="title-large num" id="day-balance">–</span></div>
-        <div class="tile"><span class="label-medium on-variant">Safe to use this day</span><span class="title-large num" id="day-safe">–</span></div>
+        <div class="tile"><span class="label-medium on-variant" id="day-balance-label">Projected balance</span><span class="title-large num" id="day-balance">–</span></div>
+        <div class="tile"><span class="label-medium on-variant" id="day-safe-label">Safe to use this day</span><span class="title-large num" id="day-safe">–</span></div>
       </div>
 
       <div id="trip-box" class="trip-card" hidden>
@@ -200,6 +209,13 @@
           <label class="text-field filled"><span class="tf-label">Hours in a full day</span>
             <input id="s-default" type="number" inputmode="decimal" step="any" min="0.25" required></label>
         </div>
+      </fieldset>
+
+      <fieldset>
+        <legend class="title-small">Personal days &amp; holidays</legend>
+        <p class="supporting body-small on-variant">Extra days your company gives you once a year (like personal or floating holidays), tracked separately from PTO accrual.</p>
+        <div id="bank-list"></div>
+        <button type="button" class="button outlined" id="btn-add-bank"><span class="icon" aria-hidden="true">add</span>Add personal days</button>
       </fieldset>
 
       <div class="actions">

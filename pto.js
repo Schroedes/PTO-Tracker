@@ -7,6 +7,8 @@
  *   - On every payday after asOfDate, "accrualHours" are added (limited by an optional cap).
  *   - On every day with a time-off entry after asOfDate, that many hours are subtracted.
  *     Paydays accrue before same-day usage is subtracted.
+ *   - Optional extra banks (e.g. "Personal holidays: 3 days every July 1") are tracked separately
+ *     from PTO. An entry with `bank: <id>` draws from that bank instead of PTO.
  *
  * Dates are ISO strings "YYYY-MM-DD" handled as UTC day numbers, so DST never shifts a day.
  */
@@ -123,7 +125,7 @@
         bal += accrued;
       }
       const entry = entries[iso] || null;
-      const used = entry ? Number(entry.hours) || 0 : 0;
+      const used = entry && isPto(entry) ? Number(entry.hours) || 0 : 0;
       bal -= used;
       days.set(iso, {
         balance: round2(bal), accrued: round2(accrued), lost: round2(lost),
@@ -195,6 +197,77 @@
     return null;
   }
 
+  // ---------- Extra banks (personal days, floating holidays, ...) ----------
+
+  function isPto(entry) {
+    return !entry.bank || entry.bank === 'pto';
+  }
+
+  /** A bank amount in hours. Banks may be set in days, which follow the "hours in a full day" setting. */
+  function bankHours(bank, value, hoursPerDay) {
+    const v = Number(value) || 0;
+    return bank.unit === 'hours' ? v : v * (Number(hoursPerDay) || 8);
+  }
+
+  /** Annual grant dates (bank.month 1-12, bank.day) strictly after afterIso, up to endIso. */
+  function grantDatesBetween(bank, afterIso, endIso) {
+    const out = [];
+    const start = toDayNum(afterIso);
+    const end = toDayNum(endIso);
+    const month0 = (Number(bank.month) || 1) - 1;
+    for (let y = Number(afterIso.slice(0, 4)); y <= Number(endIso.slice(0, 4)); y++) {
+      const d = Math.min(Number(bank.day) || 1, daysInMonth(y, month0));
+      const n = Math.round(Date.UTC(y, month0, d) / MS_PER_DAY);
+      if (n > start && n <= end) out.push(fromDayNum(n));
+    }
+    return out;
+  }
+
+  /**
+   * Day-by-day balance of one bank from asOfDate through endIso.
+   * bank.expiry: 'next-grant' (unused hours are lost when the next grant arrives),
+   *              'year-end' (lost after Dec 31), or 'never' (they carry over).
+   * Day = { balance, granted, lost, used }.
+   */
+  function buildBankTimeline(state, bank, endIso) {
+    const s = state.settings;
+    const entries = state.entries || {};
+    const hpd = s.defaultHours;
+    const amount = bankHours(bank, bank.amount, hpd);
+    const startNum = toDayNum(s.asOfDate);
+    const endNum = Math.max(toDayNum(endIso), startNum);
+    const grants = new Set(grantDatesBetween(bank, s.asOfDate, fromDayNum(endNum)));
+    let bal = bankHours(bank, bank.startingBalance, hpd);
+    const days = new Map();
+    days.set(s.asOfDate, { balance: round2(bal), granted: 0, lost: 0, used: 0 });
+    for (let n = startNum + 1; n <= endNum; n++) {
+      const iso = fromDayNum(n);
+      let lost = 0;
+      let granted = 0;
+      if (bank.expiry === 'year-end' && iso.slice(5) === '01-01' && bal > 0) { lost += bal; bal = 0; }
+      if (grants.has(iso)) {
+        if (bank.expiry === 'next-grant' && bal > 0) { lost += bal; bal = 0; }
+        granted = amount;
+        bal += amount;
+      }
+      const e = entries[iso];
+      const used = e && e.bank === bank.id ? Number(e.hours) || 0 : 0;
+      bal -= used;
+      days.set(iso, { balance: round2(bal), granted: round2(granted), lost: round2(lost), used });
+    }
+    return { start: s.asOfDate, end: fromDayNum(endNum), days };
+  }
+
+  /** Last day the bank's current hours can be used, on/after fromIso (null if they never expire). */
+  function bankExpiresOn(bank, fromIso) {
+    if (bank.expiry === 'year-end') return fromIso.slice(0, 4) + '-12-31';
+    if (bank.expiry === 'next-grant') {
+      const next = grantDatesBetween(bank, fromIso, addDays(fromIso, 367))[0];
+      return next ? addDays(next, -1) : null;
+    }
+    return null;
+  }
+
   /** Copy of state with `changes` ({iso: {hours, note} | null}) applied. */
   function withChanges(state, changes) {
     const entries = Object.assign({}, state.entries);
@@ -204,9 +277,10 @@
       else {
         entries[iso] = { hours: Number(c.hours), note: c.note || '' };
         if (c.trip) entries[iso].trip = c.trip;
+        if (c.bank && c.bank !== 'pto') entries[iso].bank = c.bank;
       }
     }
-    return { settings: state.settings, entries };
+    return Object.assign({}, state, { entries }); // keeps settings, banks, ...
   }
 
   function isWeekend(iso) {
@@ -285,8 +359,11 @@
     const countable = dates.filter((d) => toDayNum(d) > toDayNum(state.settings.asOfDate));
     let deltaHours = 0;
     for (const d of dates) {
-      const prev = state.entries[d] ? Number(state.entries[d].hours) : 0;
-      const next = changes[d] && Number(changes[d].hours) > 0 ? Number(changes[d].hours) : 0;
+      // Only hours drawn from PTO change the PTO balance.
+      const pe = state.entries[d];
+      const ne = changes[d];
+      const prev = pe && isPto(pe) ? Number(pe.hours) : 0;
+      const next = ne && isPto(ne) && Number(ne.hours) > 0 ? Number(ne.hours) : 0;
       deltaHours += next - prev;
     }
     const lowFrom = toDayNum(first) > toDayNum(todayIsoStr) ? first : todayIsoStr;
@@ -305,6 +382,7 @@
   return {
     toDayNum, fromDayNum, addDays, dayOfWeek, daysInMonth, isoFromParts, todayIso, round2,
     paydaysBetween, nextPayday, buildTimeline, balanceOn, lowPoint, safeToUse,
-    earliestAffordable, withChanges, dateRange, isWeekend, tripDates, groupTrips, horizonFor, analyzeChange,
+    earliestAffordable, withChanges, dateRange, isWeekend, tripDates, groupTrips,
+    isPto, bankHours, grantDatesBetween, buildBankTimeline, bankExpiresOn, horizonFor, analyzeChange,
   };
 });

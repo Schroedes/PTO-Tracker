@@ -141,3 +141,62 @@ test('untagged entries group across weekends but not across weekdays', () => {
   // Restricting to a subset (e.g. upcoming only) trims trips to that subset.
   assert.deepEqual(PTO.groupTrips(e, ['2026-12-22', '2026-12-24']), [['2026-12-22'], ['2026-12-24']]);
 });
+
+const personal = (over = {}) => Object.assign({
+  id: 'personal', name: 'Personal holidays', unit: 'days', amount: 3, startingBalance: 1,
+  month: 7, day: 1, expiry: 'next-grant',
+}, over);
+
+test('personal-day entries do not touch the PTO balance', () => {
+  const st = base();
+  st.entries['2026-11-10'] = { hours: 8, bank: 'personal' };
+  st.entries['2026-11-11'] = { hours: 8 };
+  const tl = PTO.buildTimeline(st, '2026-11-12');
+  assert.equal(PTO.balanceOn(tl, '2026-11-12'), 37); // 40 + 5 - 8 (only the PTO day)
+  const r = PTO.analyzeChange(st, { '2026-11-12': { hours: 8, bank: 'personal' } }, '2026-11-02', '2027-01-01');
+  assert.equal(r.deltaHours, 0);
+  // Moving an existing PTO day onto the personal bank gives the PTO hours back.
+  const r2 = PTO.analyzeChange(st, { '2026-11-11': { hours: 8, bank: 'personal' } }, '2026-11-02', '2027-01-01');
+  assert.equal(r2.deltaHours, -8);
+  assert.equal(PTO.withChanges(st, { '2026-11-13': { hours: 4, bank: 'personal' } }).entries['2026-11-13'].bank, 'personal');
+  assert.ok(!('bank' in PTO.withChanges(st, { '2026-11-13': { hours: 4, bank: 'pto' } }).entries['2026-11-13']));
+});
+
+test('bank grants yearly and unused hours expire at the next grant', () => {
+  const st = Object.assign(base(), { settings: Object.assign(base().settings, { defaultHours: 8 }) });
+  const bank = personal();
+  st.entries['2026-12-24'] = { hours: 8, bank: 'personal' };
+  st.entries['2027-07-02'] = { hours: 4, bank: 'personal' };
+  const tl = PTO.buildBankTimeline(st, bank, '2028-07-05');
+  assert.equal(tl.days.get('2026-11-01').balance, 8);
+  assert.equal(tl.days.get('2026-12-24').balance, 0);
+  assert.equal(tl.days.get('2027-07-01').granted, 24);
+  assert.equal(tl.days.get('2027-07-01').balance, 24);
+  assert.equal(tl.days.get('2027-07-02').balance, 20);
+  const g = tl.days.get('2028-07-01');
+  assert.equal(g.lost, 20);
+  assert.equal(g.balance, 24);
+  assert.equal(PTO.bankExpiresOn(bank, '2026-11-12'), '2027-06-30');
+});
+
+test('bank expiry options: year-end and never', () => {
+  const st = base();
+  const ye = PTO.buildBankTimeline(st, personal({ expiry: 'year-end', unit: 'hours', amount: 24, startingBalance: 10 }), '2027-07-02');
+  assert.equal(ye.days.get('2027-01-01').lost, 10);
+  assert.equal(ye.days.get('2027-01-01').balance, 0);
+  assert.equal(ye.days.get('2027-07-01').balance, 24);
+  const nv = PTO.buildBankTimeline(st, personal({ expiry: 'never', unit: 'hours', amount: 24, startingBalance: 10 }), '2027-07-02');
+  assert.equal(nv.days.get('2027-07-01').balance, 34);
+  assert.equal(PTO.bankExpiresOn(personal({ expiry: 'never' }), '2026-11-12'), null);
+});
+
+test('grant dates clamp to short months', () => {
+  assert.deepEqual(PTO.grantDatesBetween({ month: 2, day: 30 }, '2027-01-01', '2028-12-31'), ['2027-02-28', '2028-02-29']);
+});
+
+test('withChanges keeps banks and other state', () => {
+  const st = Object.assign(base(), { banks: [personal()] });
+  const next = PTO.withChanges(st, { '2026-12-01': { hours: 8 } });
+  assert.deepEqual(next.banks, st.banks);
+  assert.equal(next.settings, st.settings);
+});

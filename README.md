@@ -22,6 +22,12 @@ seeing the consequences of taking time off before you commit to it.
   - if it would go negative: how far, and the date you'd climb back above zero
   - the earliest date you could take those hours without going negative
   - if you set a balance cap: hours you'd save from (or lose to) the cap
+- **Personal days and holidays.** In Settings → *Personal days & holidays*, add extra time off your
+  company grants once a year outside of PTO accrual (e.g. 3 personal holidays every July 1). Set how
+  many you have left now and whether unused days expire at the next grant, on Dec 31, or never.
+  When booking a day, choose **PTO** or the personal bank; personal days don't touch your PTO balance.
+  The home screen shows how many are left, when the next grant arrives, and how many will expire
+  unused; you'll also get an alert 60 days before they do.
 - **At-a-glance summary**: balance today, next payday, lowest point ahead, Dec 31 balance, plus
   warnings when your plan goes negative, when you'll hit your cap, or when your stub balance is stale.
 - **Pay schedules**: every 2 weeks, weekly, 15th & last day, or monthly.
