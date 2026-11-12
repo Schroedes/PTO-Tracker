@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4fbf8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e1514" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="PTO">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>PTO Tracker</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&icon_names=add,check,check_circle,chevron_left,chevron_right,close,delete,download,error,event,event_available,expand_more,info,payments,remove,settings,today,upload,warning&display=block">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top-app-bar" id="app-bar">
+    <span class="icon brand" aria-hidden="true">event_available</span>
+    <h1 class="title-large">PTO Tracker</h1>
+    <button id="btn-settings" class="icon-button" aria-label="Settings">
+      <span class="icon" aria-hidden="true">settings</span>
+    </button>
+  </header>
+
+  <main>
+    <section class="stats-grid" aria-label="Summary">
+      <button class="card filled stat" id="card-today">
+        <span class="label-medium on-variant">Balance today</span>
+        <span class="headline-small stat-value" id="sum-today">–</span>
+        <span class="body-small on-variant" id="sum-today-sub"></span>
+      </button>
+      <button class="card filled stat" id="card-payday">
+        <span class="label-medium on-variant">Next payday</span>
+        <span class="headline-small stat-value" id="sum-payday">–</span>
+        <span class="body-small on-variant" id="sum-payday-sub"></span>
+      </button>
+      <button class="card filled stat" id="card-low">
+        <span class="label-medium on-variant">Lowest ahead</span>
+        <span class="headline-small stat-value" id="sum-low">–</span>
+        <span class="body-small on-variant" id="sum-low-sub"></span>
+      </button>
+      <button class="card filled stat" id="card-eoy">
+        <span class="label-medium on-variant" id="sum-eoy-label">End of year</span>
+        <span class="headline-small stat-value" id="sum-eoy">–</span>
+        <span class="body-small on-variant" id="sum-eoy-sub"></span>
+      </button>
+    </section>
+
+    <div id="alert" class="alerts" hidden></div>
+
+    <section class="card outlined calendar" aria-label="Calendar">
+      <div class="cal-head">
+        <button class="icon-button" id="prev-month" aria-label="Previous month"><span class="icon" aria-hidden="true">chevron_left</span></button>
+        <h2 class="title-medium" id="month-label">Month</h2>
+        <button class="icon-button" id="next-month" aria-label="Next month"><span class="icon" aria-hidden="true">chevron_right</span></button>
+      </div>
+      <div class="cal-tools">
+        <button class="chip assist" id="btn-today"><span class="icon" aria-hidden="true">today</span>Today</button>
+        <span class="body-small on-variant">Tap a day to plan time off</span>
+      </div>
+      <div class="weekdays label-small" aria-hidden="true">
+        <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+      </div>
+      <div class="grid" id="grid" role="grid"></div>
+      <div class="legend label-small">
+        <span><i class="lg lg-pay"></i>Payday</span>
+        <span><i class="lg lg-off"></i>Time off</span>
+        <span><i class="lg lg-neg"></i>Negative</span>
+        <span><i class="lg lg-cap"></i>At cap</span>
+      </div>
+    </section>
+
+    <section class="card outlined upcoming" aria-label="Planned time off">
+      <div class="section-head">
+        <h2 class="title-medium">Planned time off</h2>
+        <span id="planned-total" class="label-large on-variant"></span>
+      </div>
+      <ul id="upcoming-list" class="list"></ul>
+      <button class="button text" id="toggle-past" hidden></button>
+      <ul id="past-list" class="list past" hidden></ul>
+    </section>
+  </main>
+
+  <button class="fab extended" id="fab-add" aria-label="Add time off">
+    <span class="icon" aria-hidden="true">add</span><span class="label-large">Time off</span>
+  </button>
+
+  <!-- Day bottom sheet -->
+  <dialog id="day-sheet" class="sheet" aria-labelledby="day-title">
+    <form method="dialog" id="day-form">
+      <div class="drag-handle" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <div>
+          <h2 class="title-large" id="day-title">Day</h2>
+          <div id="day-tags" class="tags"></div>
+        </div>
+        <button class="icon-button" value="cancel" formnovalidate aria-label="Close"><span class="icon" aria-hidden="true">close</span></button>
+      </div>
+
+      <div class="stat-pair">
+        <div class="tile"><span class="label-medium on-variant">Projected balance</span><span class="title-large num" id="day-balance">–</span></div>
+        <div class="tile"><span class="label-medium on-variant">Safe to use this day</span><span class="title-large num" id="day-safe">–</span></div>
+      </div>
+
+      <div class="hours-row">
+        <button type="button" class="icon-button tonal step" data-step="-1" aria-label="Decrease hours"><span class="icon" aria-hidden="true">remove</span></button>
+        <label class="text-field filled hours-field">
+          <span class="tf-label">Hours off</span>
+          <input id="day-hours" type="number" inputmode="decimal" min="0" step="any" placeholder="0">
+        </label>
+        <button type="button" class="icon-button tonal step" data-step="1" aria-label="Increase hours"><span class="icon" aria-hidden="true">add</span></button>
+      </div>
+      <div class="chip-set" id="quick-hours"></div>
+
+      <label class="text-field filled">
+        <span class="tf-label">Note (optional)</span>
+        <input id="day-note" type="text" maxlength="80" placeholder="e.g. Dentist, Vacation, Sick">
+      </label>
+
+      <details id="range-box" class="expander">
+        <summary class="body-large">Repeat for multiple days</summary>
+        <label class="text-field filled">
+          <span class="tf-label">Through</span>
+          <input id="day-through" type="date">
+        </label>
+        <label class="switch-row body-large">
+          <span>Skip weekends</span>
+          <input type="checkbox" role="switch" class="switch" id="day-skip-weekends" checked>
+        </label>
+      </details>
+
+      <div id="impact" class="impact" aria-live="polite"></div>
+
+      <div class="actions">
+        <button type="button" class="button text danger" id="day-delete" hidden><span class="icon" aria-hidden="true">delete</span>Remove</button>
+        <button type="submit" class="button filled" id="day-save" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Settings bottom sheet -->
+  <dialog id="settings-sheet" class="sheet" aria-labelledby="settings-title">
+    <form method="dialog" id="settings-form">
+      <div class="drag-handle" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <h2 class="title-large" id="settings-title">Your PTO</h2>
+        <button class="icon-button" value="cancel" formnovalidate aria-label="Close" id="settings-close"><span class="icon" aria-hidden="true">close</span></button>
+      </div>
+      <p class="body-medium on-variant" id="settings-intro" hidden>Enter the balance from your latest pay stub and how much you earn each pay period. Everything stays on this device.</p>
+
+      <fieldset>
+        <legend class="title-small">Current balance</legend>
+        <div class="two">
+          <label class="text-field filled"><span class="tf-label">Hours</span>
+            <input id="s-balance" type="number" inputmode="decimal" step="any" required></label>
+          <label class="text-field filled"><span class="tf-label">As of</span>
+            <input id="s-asof" type="date" required></label>
+        </div>
+        <p class="supporting body-small on-variant">Time off on or before this date is treated as already deducted. Update this whenever you get a new pay stub.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend class="title-small">Accrual</legend>
+        <div class="two">
+          <label class="text-field filled"><span class="tf-label">Hours per paycheck</span>
+            <input id="s-accrual" type="number" inputmode="decimal" step="any" min="0" required></label>
+          <label class="text-field filled select"><span class="tf-label">Pay schedule</span>
+            <select id="s-frequency">
+              <option value="biweekly">Every 2 weeks</option>
+              <option value="weekly">Every week</option>
+              <option value="semimonthly">15th &amp; last day</option>
+              <option value="monthly">Monthly</option>
+            </select></label>
+        </div>
+        <label class="text-field filled" id="anchor-field"><span class="tf-label">A payday (any past or upcoming one)</span>
+          <input id="s-anchor" type="date" required></label>
+      </fieldset>
+
+      <fieldset>
+        <legend class="title-small">Options</legend>
+        <div class="two">
+          <label class="text-field filled"><span class="tf-label">Max balance cap</span>
+            <input id="s-cap" type="number" inputmode="decimal" step="any" min="0" placeholder="None"></label>
+          <label class="text-field filled"><span class="tf-label">Hours in a full day</span>
+            <input id="s-default" type="number" inputmode="decimal" step="any" min="0.25" required></label>
+        </div>
+      </fieldset>
+
+      <div class="actions">
+        <button type="submit" class="button filled" value="save">Save</button>
+      </div>
+
+      <fieldset class="data">
+        <legend class="title-small">Your data</legend>
+        <div class="data-btns">
+          <button type="button" class="button outlined" id="btn-export"><span class="icon" aria-hidden="true">download</span>Export</button>
+          <label class="button outlined" for="import-file"><span class="icon" aria-hidden="true">upload</span>Import</label>
+          <input type="file" id="import-file" accept="application/json,.json" hidden>
+          <button type="button" class="button text danger" id="btn-reset"><span class="icon" aria-hidden="true">delete</span>Erase all data</button>
+        </div>
+      </fieldset>
+    </form>
+  </dialog>
+
+  <div id="toast" class="snackbar body-medium" role="status" hidden></div>
+
+  <script src="pto.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
