@@ -10,6 +10,11 @@ seeing the consequences of taking time off before you commit to it.
   end-of-day balance with accruals (green dot = payday) and planned time off included.
 - **Plan time off.** Tap a day, set the hours (quick 2h / 4h / full-day buttons or ±), add a note.
   Use *Repeat for multiple days* to book a whole vacation at once (optionally skipping weekends).
+- **Cancel a whole trip at once.** Days booked together are kept as one trip. Open any day of it
+  and tap **Remove trip** to delete every day in one go; the snackbar's **Undo** brings it back.
+  Older back-to-back entries (separated only by weekends) are treated as one trip too. The planned
+  list shows each trip as a single row. To clear an arbitrary span, set hours to 0 with
+  *Repeat for multiple days* and tap **Remove N days**.
 - **See the consequences before saving.** While you edit, the sheet shows:
   - your balance after that day, before → after
   - the lowest your balance will get afterwards, considering everything else you've planned
@@ -17,11 +22,27 @@ seeing the consequences of taking time off before you commit to it.
   - if it would go negative: how far, and the date you'd climb back above zero
   - the earliest date you could take those hours without going negative
   - if you set a balance cap: hours you'd save from (or lose to) the cap
+- **Personal days and holidays.** In Settings → *Personal days & holidays*, add extra time off your
+  company grants once a year outside of PTO accrual (e.g. 3 personal holidays every July 1). Set how
+  many you have left now and whether unused days expire at the next grant, on Dec 31, or never.
+  When booking a day, choose **PTO** or the personal bank; personal days don't touch your PTO balance.
+  The home screen shows how many are left, when the next grant arrives, and how many will expire
+  unused; you'll also get an alert 60 days before they do.
+- **Leave pauses accrual.** If you go on leave and stop earning PTO, add the leave in Settings →
+  *Leave (accrual paused)* or tap **Start leave on this day** / **End leave on this day** in any day's
+  sheet; the end date can stay blank until you know it. Paychecks covering leave earn nothing, and
+  one that covers part leave and part work earns its share of the workdays you weren't on leave.
+  You can still book PTO during leave to top up reduced pay; it comes straight off your balance.
 - **At-a-glance summary**: balance today, next payday, lowest point ahead, Dec 31 balance, plus
   warnings when your plan goes negative, when you'll hit your cap, or when your stub balance is stale.
 - **Pay schedules**: every 2 weeks, weekly, 15th & last day, or monthly.
-- **Works offline and installs to your home screen** (it's a PWA). Data stays in your browser's
-  local storage on that device; use *Settings → Export backup* to save or move it.
+- **Your data stays on your device.** Everything you enter is saved in the browser's local storage
+  as you go, so it survives refreshes and restarts; nothing is sent to a server. The app asks the
+  browser to mark that storage persistent, keeps open tabs in sync so one can't overwrite another,
+  and never overwrites saved data it can't read. Settings shows when it was last saved.
+  Browsers can still clear site data (iPhone Safari does after 7 days without a visit unless the
+  app is on your Home Screen), so use *Settings → Export* for a backup you can *Import* later.
+- **Works offline and installs to your home screen** (it's a PWA).
 
 ## Keeping it accurate
 

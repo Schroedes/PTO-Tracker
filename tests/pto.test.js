@@ -110,3 +110,125 @@ test('dates are DST-safe', () => {
   assert.equal(PTO.addDays('2026-11-01', 1), '2026-11-02');
   assert.equal(PTO.dayOfWeek('2026-11-12'), 4);
 });
+
+test('withChanges keeps trip ids', () => {
+  const st = PTO.withChanges(base(), { '2026-12-01': { hours: 8, note: 'x', trip: 't1' } });
+  assert.deepEqual(st.entries['2026-12-01'], { hours: 8, note: 'x', trip: 't1' });
+});
+
+test('tripDates uses the trip id when present', () => {
+  const e = {
+    '2026-12-21': { hours: 8, trip: 'a' }, '2026-12-22': { hours: 8, trip: 'a' },
+    '2026-12-23': { hours: 8, trip: 'b' }, '2026-12-28': { hours: 8, trip: 'a' },
+  };
+  assert.deepEqual(PTO.tripDates(e, '2026-12-22'), ['2026-12-21', '2026-12-22', '2026-12-28']);
+  assert.deepEqual(PTO.tripDates(e, '2026-12-23'), ['2026-12-23']);
+  assert.deepEqual(PTO.tripDates(e, '2026-12-24'), []);
+});
+
+test('untagged entries group across weekends but not across weekdays', () => {
+  const e = {
+    '2026-12-17': { hours: 8 }, '2026-12-18': { hours: 8 }, // Thu, Fri
+    '2026-12-21': { hours: 8 }, '2026-12-22': { hours: 8 }, // Mon, Tue (weekend between)
+    '2026-12-24': { hours: 8 },                             // Thu (Wed gap → separate)
+    '2026-12-25': { hours: 8, trip: 'x' },                  // tagged → separate
+  };
+  assert.deepEqual(PTO.tripDates(e, '2026-12-21'), ['2026-12-17', '2026-12-18', '2026-12-21', '2026-12-22']);
+  assert.deepEqual(PTO.tripDates(e, '2026-12-24'), ['2026-12-24']);
+  assert.deepEqual(PTO.groupTrips(e, Object.keys(e)), [
+    ['2026-12-17', '2026-12-18', '2026-12-21', '2026-12-22'], ['2026-12-24'], ['2026-12-25'],
+  ]);
+  // Restricting to a subset (e.g. upcoming only) trims trips to that subset.
+  assert.deepEqual(PTO.groupTrips(e, ['2026-12-22', '2026-12-24']), [['2026-12-22'], ['2026-12-24']]);
+});
+
+const personal = (over = {}) => Object.assign({
+  id: 'personal', name: 'Personal holidays', unit: 'days', amount: 3, startingBalance: 1,
+  month: 7, day: 1, expiry: 'next-grant',
+}, over);
+
+test('personal-day entries do not touch the PTO balance', () => {
+  const st = base();
+  st.entries['2026-11-10'] = { hours: 8, bank: 'personal' };
+  st.entries['2026-11-11'] = { hours: 8 };
+  const tl = PTO.buildTimeline(st, '2026-11-12');
+  assert.equal(PTO.balanceOn(tl, '2026-11-12'), 37); // 40 + 5 - 8 (only the PTO day)
+  const r = PTO.analyzeChange(st, { '2026-11-12': { hours: 8, bank: 'personal' } }, '2026-11-02', '2027-01-01');
+  assert.equal(r.deltaHours, 0);
+  // Moving an existing PTO day onto the personal bank gives the PTO hours back.
+  const r2 = PTO.analyzeChange(st, { '2026-11-11': { hours: 8, bank: 'personal' } }, '2026-11-02', '2027-01-01');
+  assert.equal(r2.deltaHours, -8);
+  assert.equal(PTO.withChanges(st, { '2026-11-13': { hours: 4, bank: 'personal' } }).entries['2026-11-13'].bank, 'personal');
+  assert.ok(!('bank' in PTO.withChanges(st, { '2026-11-13': { hours: 4, bank: 'pto' } }).entries['2026-11-13']));
+});
+
+test('bank grants yearly and unused hours expire at the next grant', () => {
+  const st = Object.assign(base(), { settings: Object.assign(base().settings, { defaultHours: 8 }) });
+  const bank = personal();
+  st.entries['2026-12-24'] = { hours: 8, bank: 'personal' };
+  st.entries['2027-07-02'] = { hours: 4, bank: 'personal' };
+  const tl = PTO.buildBankTimeline(st, bank, '2028-07-05');
+  assert.equal(tl.days.get('2026-11-01').balance, 8);
+  assert.equal(tl.days.get('2026-12-24').balance, 0);
+  assert.equal(tl.days.get('2027-07-01').granted, 24);
+  assert.equal(tl.days.get('2027-07-01').balance, 24);
+  assert.equal(tl.days.get('2027-07-02').balance, 20);
+  const g = tl.days.get('2028-07-01');
+  assert.equal(g.lost, 20);
+  assert.equal(g.balance, 24);
+  assert.equal(PTO.bankExpiresOn(bank, '2026-11-12'), '2027-06-30');
+});
+
+test('bank expiry options: year-end and never', () => {
+  const st = base();
+  const ye = PTO.buildBankTimeline(st, personal({ expiry: 'year-end', unit: 'hours', amount: 24, startingBalance: 10 }), '2027-07-02');
+  assert.equal(ye.days.get('2027-01-01').lost, 10);
+  assert.equal(ye.days.get('2027-01-01').balance, 0);
+  assert.equal(ye.days.get('2027-07-01').balance, 24);
+  const nv = PTO.buildBankTimeline(st, personal({ expiry: 'never', unit: 'hours', amount: 24, startingBalance: 10 }), '2027-07-02');
+  assert.equal(nv.days.get('2027-07-01').balance, 34);
+  assert.equal(PTO.bankExpiresOn(personal({ expiry: 'never' }), '2026-11-12'), null);
+});
+
+test('grant dates clamp to short months', () => {
+  assert.deepEqual(PTO.grantDatesBetween({ month: 2, day: 30 }, '2027-01-01', '2028-12-31'), ['2027-02-28', '2028-02-29']);
+});
+
+test('withChanges keeps banks and other state', () => {
+  const st = Object.assign(base(), { banks: [personal()] });
+  const next = PTO.withChanges(st, { '2026-12-01': { hours: 8 } });
+  assert.deepEqual(next.banks, st.banks);
+  assert.equal(next.settings, st.settings);
+});
+
+test('leave pauses accrual for whole pay periods on leave', () => {
+  // Paydays Nov 6, Nov 20, Dec 4, Dec 18 (biweekly Fridays), 5h each.
+  const st = Object.assign(base(), { leaves: [{ id: 'l', start: '2026-11-07', end: '2026-12-04' }] });
+  const tl = PTO.buildTimeline(st, '2026-12-31');
+  assert.equal(tl.days.get('2026-11-06').accrued, 5);      // period Oct 24–Nov 6: worked
+  assert.equal(tl.days.get('2026-11-20').accrued, 0);      // fully on leave
+  assert.equal(tl.days.get('2026-11-20').paused, 5);
+  assert.equal(tl.days.get('2026-12-04').accrued, 0);
+  assert.equal(tl.days.get('2026-12-18').accrued, 5);      // back at work
+  assert.equal(PTO.balanceOn(tl, '2026-12-18'), 50);
+  assert.equal(tl.days.get('2026-11-10').leave, true);
+  assert.equal(tl.days.get('2026-12-07').leave, false);
+});
+
+test('leave pro-rates a partly worked pay period and can be open-ended', () => {
+  // Pay period Nov 21–Dec 4 has 10 weekdays; leave starts Mon Nov 30, so 5 worked and 5 on leave.
+  const st = Object.assign(base(), { leaves: [{ id: 'l', start: '2026-11-30' }] }); // no end date
+  const tl = PTO.buildTimeline(st, '2027-01-31');
+  assert.equal(tl.days.get('2026-12-04').accrued, 2.5);
+  assert.equal(tl.days.get('2026-12-04').paused, 2.5);
+  assert.equal(tl.days.get('2027-01-29').accrued, 0);      // still on leave
+  assert.equal(PTO.onLeave(st.leaves, '2027-06-01'), true);
+});
+
+test('PTO can still be used while on leave', () => {
+  const st = Object.assign(base(), { leaves: [{ id: 'l', start: '2026-11-07', end: '2026-12-04' }] });
+  st.entries['2026-11-16'] = { hours: 4 };
+  const tl = PTO.buildTimeline(st, '2026-12-05');
+  assert.equal(PTO.balanceOn(tl, '2026-11-16'), 41);       // 40 + 5 - 4
+  assert.equal(PTO.balanceOn(tl, '2026-12-05'), 41);       // nothing accrued on leave
+});
