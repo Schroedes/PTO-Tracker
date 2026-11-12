@@ -2,7 +2,10 @@
 (function () {
   'use strict';
   const P = window.PTO;
+  // Everything is stored in this browser's localStorage; nothing is sent to a server.
   const STORAGE_KEY = 'pto-tracker:v1';
+  const SAVED_AT_KEY = STORAGE_KEY + ':savedAt';
+  const UNREADABLE_KEY = STORAGE_KEY + ':unreadable';
   // Must be defined before load() runs below (const is not hoisted).
   const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
   const $ = (id) => document.getElementById(id);
@@ -33,16 +36,56 @@
     };
   }
   function load() {
+    let raw = null;
+    try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) { return null; }
+    if (!raw) return null;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
       const s = JSON.parse(raw);
-      return valid(s) ? normalize(s) : null;
-    } catch (e) { return null; }
+      if (valid(s)) return normalize(s);
+    } catch (e) { /* fall through */ }
+    // Saved data we can't read: keep a copy instead of letting the first-run setup overwrite it.
+    try { if (!localStorage.getItem(UNREADABLE_KEY)) localStorage.setItem(UNREADABLE_KEY, raw); } catch (e) { /* ignore */ }
+    return null;
   }
   function save() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-    catch (e) { toast('Could not save — storage is unavailable'); }
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(SAVED_AT_KEY, new Date().toISOString());
+    } catch (e) {
+      toast('Could not save — this browser is blocking storage (private mode?)');
+      return;
+    }
+    requestPersistence();
+  }
+
+  /**
+   * Ask the browser to keep our data even when it's short on space. Chrome/Edge grant this silently
+   * for sites you use or install; Firefox may ask once; Safari keeps data for Home Screen apps.
+   */
+  let persistAsked = false;
+  function requestPersistence() {
+    if (persistAsked || !navigator.storage || !navigator.storage.persist) return;
+    persistAsked = true;
+    navigator.storage.persisted()
+      .then((already) => already || navigator.storage.persist())
+      .catch(() => {})
+      .then(renderStorageStatus);
+  }
+
+  async function renderStorageStatus() {
+    const el = $('storage-status');
+    if (!el) return;
+    let savedAt = null;
+    try { savedAt = localStorage.getItem(SAVED_AT_KEY); } catch (e) { /* ignore */ }
+    let persisted = null;
+    try { if (navigator.storage && navigator.storage.persisted) persisted = await navigator.storage.persisted(); } catch (e) { /* ignore */ }
+    const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+    const when = savedAt ? new Date(savedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : null;
+    let msg = 'Your data is saved in this browser on this device' + (when ? ' (last saved ' + when + ')' : '') + '. Nothing is sent to a server. ';
+    if (persisted) msg += 'Storage is marked persistent, so the browser won’t clear it on its own.';
+    else if (standalone) msg += 'It stays as long as the app is on your Home Screen.';
+    else msg += 'Browsers can clear site data — iPhone Safari does after 7 days without a visit — so add the app to your Home Screen and export a backup now and then.';
+    el.textContent = msg;
   }
   function valid(s) {
     return s && s.settings && ISO_RE.test(s.settings.asOfDate) && typeof s.entries === 'object';
@@ -628,6 +671,7 @@
     $('s-cap').value = s.cap === null || s.cap === '' ? '' : s.cap;
     $('s-default').value = s.defaultHours;
     renderBankEditors(banks());
+    renderStorageStatus();
     $('settings-intro').hidden = !firstRun;
     $('settings-close').hidden = firstRun;
     syncAnchorField();
@@ -887,7 +931,7 @@
   });
   $('btn-reset').addEventListener('click', () => {
     if (!confirm('Erase your balance, settings and all planned time off on this device?')) return;
-    try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+    try { [STORAGE_KEY, SAVED_AT_KEY].forEach((k) => localStorage.removeItem(k)); } catch (e) { /* ignore */ }
     state = defaultState();
     firstRun = true;
     $('settings-sheet').close();
@@ -907,8 +951,23 @@
     if (!document.hidden && P.todayIso() !== today) render();
   });
 
+  // Keep tabs in sync: another tab saved, so adopt its data rather than overwrite it later.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== STORAGE_KEY || !e.newValue) return;
+    try {
+      const s = JSON.parse(e.newValue);
+      if (!valid(s)) return;
+      state = normalize(s);
+      firstRun = false;
+      for (const dlg of document.querySelectorAll('dialog[open]')) dlg.close();
+      render();
+      toast('Updated with changes from another tab');
+    } catch (err) { /* ignore */ }
+  });
+
   render();
   if (firstRun) openSettings();
+  else requestPersistence();
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});

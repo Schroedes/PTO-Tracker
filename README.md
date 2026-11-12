@@ -31,8 +31,13 @@ seeing the consequences of taking time off before you commit to it.
 - **At-a-glance summary**: balance today, next payday, lowest point ahead, Dec 31 balance, plus
   warnings when your plan goes negative, when you'll hit your cap, or when your stub balance is stale.
 - **Pay schedules**: every 2 weeks, weekly, 15th & last day, or monthly.
-- **Works offline and installs to your home screen** (it's a PWA). Data stays in your browser's
-  local storage on that device; use *Settings → Export backup* to save or move it.
+- **Your data stays on your device.** Everything you enter is saved in the browser's local storage
+  as you go, so it survives refreshes and restarts; nothing is sent to a server. The app asks the
+  browser to mark that storage persistent, keeps open tabs in sync so one can't overwrite another,
+  and never overwrites saved data it can't read. Settings shows when it was last saved.
+  Browsers can still clear site data (iPhone Safari does after 7 days without a visit unless the
+  app is on your Home Screen), so use *Settings → Export* for a backup you can *Import* later.
+- **Works offline and installs to your home screen** (it's a PWA).
 
 ## Keeping it accurate
 
